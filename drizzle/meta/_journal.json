@@ -64,6 +64,20 @@
       "when": 1794695097794,
       "tag": "0008_pink_ultron",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794695477127,
+      "tag": "0009_grey_anita_blake",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794695488336,
+      "tag": "0010_settlement_guard",
+      "breakpoints": true
     }
   ]
 }

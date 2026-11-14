@@ -186,6 +186,8 @@ export const fundingInput = z.object({
   amount: z.string().trim().min(1, "Enter an amount.").max(40),
   idempotencyKey: z.string().regex(/^[A-Za-z0-9_-]{16,80}$/, "Reload the page and try again."),
   confirmed: z.literal(true, { error: "Confirm that you authorize this funding." }),
+  /** For a real wallet: the transfer the buyer already sent from their own wallet. */
+  transactionHash: z.string().trim().max(80).optional(),
 });
 
 export const depositInput = z.object({

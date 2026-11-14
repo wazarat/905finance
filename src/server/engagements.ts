@@ -10,6 +10,7 @@ import type {
   MandateStatus,
   OrgRole,
   PaymentRail,
+  Settlement,
   SpendingMandate,
   WalletStatus,
 } from "@/db/schema";
@@ -28,9 +29,12 @@ import { conflict, forbidden, invalid, notFound } from "./errors";
 import { closeEngagement, settleExpired, transition, withEngagement } from "./engagement-core";
 import { engagementInput, fundingInput, mandateInput, parseInput } from "./validation";
 import { settleFundingRequest } from "./approvals";
-import { getPaymentProvider, simulatedRecipient } from "./payments/registry";
-import { ensureMasterAccount } from "./wallets";
-import { getWalletProvider } from "./wallets/registry";
+import { GOAT_TESTNET3, isTxHash } from "@/lib/goat";
+import { refreshSellerIdentity, verifiedReceivingWallet } from "./identity";
+import { simulatedRecipient } from "./payments/registry";
+import { ensureFundingWallet, ensureMasterAccount } from "./wallets";
+import type { FundingResult } from "./wallets/provider";
+import { currentSettlement, getGoatWalletProvider, getWalletProvider } from "./wallets/registry";
 
 const {
   engagements,
@@ -152,7 +156,13 @@ export async function saveMandateDraft(
     if (!seller || seller.status !== "active") {
       throw conflict("This seller's listing is no longer active.");
     }
-    const asset = getWalletProvider(input.rail).asset;
+    // Real settlement needs two things: GOAT Testnet3 configured, and a seller whose
+    // confirmed on-chain identity says where it is paid. Otherwise the engagement is simulated.
+    const settlement: Settlement =
+      currentSettlement() === "goat_testnet3" && (await verifiedReceivingWallet(seller.id, tx))
+        ? "goat_testnet3"
+        : "simulated";
+    const asset = getWalletProvider(input.rail, settlement).asset;
     const total = parseUnits(input.totalBudget, asset.decimals);
     const perTransaction = parseUnits(input.perTransactionLimit, asset.decimals);
     const fieldErrors: Record<string, string[]> = {};
@@ -222,7 +232,10 @@ export async function saveMandateDraft(
     await tx
       .insert(mandatePermittedOfferings)
       .values(offeringIds.map((serviceOfferingId) => ({ mandateId: mandate.id, serviceOfferingId })));
-    await tx.update(engagements).set({ rail: input.rail }).where(eq(engagements.id, engagement.id));
+    await tx
+      .update(engagements)
+      .set({ rail: input.rail, settlement })
+      .where(eq(engagements.id, engagement.id));
 
     await recordAudit(
       {
@@ -297,16 +310,32 @@ export async function authorizeEngagement(
 
     // The account the seller must be paid at is fixed here, by the buyer's
     // authorization. A seller cannot later ask to be paid somewhere else.
-    const paymentProvider = getPaymentProvider(engagement.rail);
+    let authorizedRecipient: string;
+    if (engagement.settlement === "simulated") {
+      authorizedRecipient = simulatedRecipient(engagement.rail, engagement.sellerProfileId);
+    } else {
+      // Read the chain again now: the wallet the buyer authorizes is the one the
+      // registry names at this moment, not one remembered from an earlier look.
+      try {
+        await refreshSellerIdentity(engagement.sellerProfileId, tx);
+      } catch {
+        throw conflict("GOAT Network could not be read just now, so the seller's wallet could not be checked. Try again shortly.");
+      }
+      const wallet = await verifiedReceivingWallet(engagement.sellerProfileId, tx);
+      if (!wallet) {
+        throw conflict(
+          "This seller no longer has a confirmed GOAT identity with a receiving wallet, so it cannot be paid. The engagement was not authorized.",
+        );
+      }
+      authorizedRecipient = wallet;
+    }
     await tx
       .update(spendingMandates)
       .set({
         status: "authorized",
         authorizedAt: now,
         authorizedBy: who.userId,
-        authorizedRecipient: paymentProvider.simulated
-          ? simulatedRecipient(engagement.rail, engagement.sellerProfileId)
-          : null,
+        authorizedRecipient,
       })
       .where(eq(spendingMandates.id, mandate.id));
     await tx.insert(purchasingAgents).values({ engagementId: engagement.id, status: "inactive" });
@@ -362,12 +391,15 @@ export async function provisionEngagementWallet(
       .where(eq(engagementWallets.engagementId, engagement.id));
     if (already) throw conflict("This engagement already has a wallet.");
 
-    const provider = getWalletProvider(engagement.rail);
-    await ensureMasterAccount(tx, engagement.organizationId, engagement.rail);
+    const provider = getWalletProvider(engagement.rail, engagement.settlement);
+    // A simulated engagement draws on the platform's simulated master account.
+    // A real one is funded from the buyer's own wallet, which the platform does not hold.
+    if (provider.simulated) await ensureMasterAccount(tx, engagement.organizationId, engagement.rail);
 
     let providerRef: string;
+    let custodyRef: string | undefined;
     try {
-      ({ providerRef } = await provider.provisionEngagementWallet({
+      ({ providerRef, custodyRef } = await provider.provisionEngagementWallet({
         engagementId: engagement.id,
         organizationId: engagement.organizationId,
       }));
@@ -386,6 +418,7 @@ export async function provisionEngagementWallet(
         assetDecimals: provider.asset.decimals,
         provider: provider.name,
         providerRef,
+        custodyRef: custodyRef ?? null,
         status: "awaiting_funding",
         isSimulated: provider.simulated,
       })
@@ -468,12 +501,6 @@ export async function authorizeFunding(
     if (!wallet || (wallet.status !== "awaiting_funding" && wallet.status !== "active")) {
       throw conflict("This engagement's wallet cannot receive funds.");
     }
-    // Funds only ever come from this organization's master account on the same rail.
-    const master = await ensureMasterAccount(tx, engagement.organizationId, engagement.rail);
-    if (master.rail !== wallet.rail || master.asset !== wallet.asset) {
-      throw conflict("The master account and the wallet are not on the same rail.");
-    }
-
     const asset: AssetInfo = { code: wallet.asset, decimals: wallet.assetDecimals };
     const amount = parseUnits(input.amount, asset.decimals);
     if (amount === null || amount <= 0n) {
@@ -481,7 +508,56 @@ export async function authorizeFunding(
         amount: ["Enter an amount greater than zero, such as 100 or 100.00."],
       });
     }
-    if (amount > master.balanceUnits) {
+
+    // A real wallet is funded by the buyer, from the buyer's own wallet. The
+    // platform cannot send it. What is authorized here is a transfer the buyer
+    // has already made, and it is credited only once the chain confirms it.
+    let onChain: { hash: string; from: string } | null = null;
+    if (!wallet.isSimulated) {
+      if (!isTxHash(input.transactionHash)) {
+        throw invalid("Check the highlighted fields.", {
+          transactionHash: ["Paste the hash of the transfer you sent, starting with 0x."],
+        });
+      }
+      const [used] = await tx
+        .select({ id: fundingAuthorizations.id })
+        .from(fundingAuthorizations)
+        .where(
+          and(
+            eq(fundingAuthorizations.providerRef, input.transactionHash),
+            eq(fundingAuthorizations.isSimulated, false),
+          ),
+        );
+      if (used) {
+        throw invalid("Check the highlighted fields.", {
+          transactionHash: ["That transfer has already been credited."],
+        });
+      }
+      let confirmation;
+      try {
+        confirmation = await getGoatWalletProvider().confirmFundingTransfer({
+          hash: input.transactionHash,
+          to: wallet.providerRef as `0x${string}`,
+          amountUnits: amount,
+        });
+      } catch {
+        throw conflict("GOAT Network could not be read just now. Nothing was credited; try again shortly.");
+      }
+      if (!confirmation.ok) {
+        if (confirmation.pending) throw conflict(confirmation.reason);
+        throw invalid("Check the highlighted fields.", { transactionHash: [confirmation.reason] });
+      }
+      onChain = { hash: input.transactionHash, from: confirmation.from };
+    }
+
+    // Funds only ever come from this organization's own account on the same rail.
+    const master = onChain
+      ? await ensureFundingWallet(tx, engagement.organizationId, onChain.from, asset)
+      : await ensureMasterAccount(tx, engagement.organizationId, engagement.rail);
+    if (master.rail !== wallet.rail || master.asset !== wallet.asset || master.isSimulated !== wallet.isSimulated) {
+      throw conflict("The master account and the wallet are not on the same rail.");
+    }
+    if (!onChain && amount > master.balanceUnits) {
       throw invalid("Check the highlighted fields.", {
         amount: [
           `Only ${formatUnits(master.balanceUnits, asset)} is available in the ${engagement.rail} master account.`,
@@ -508,7 +584,7 @@ export async function authorizeFunding(
       throw conflict("This seller's listing is no longer active, so the engagement cannot be funded.");
     }
 
-    const provider = getWalletProvider(engagement.rail);
+    const provider = getWalletProvider(engagement.rail, engagement.settlement);
     const [funding] = await tx
       .insert(fundingAuthorizations)
       .values({
@@ -524,13 +600,16 @@ export async function authorizeFunding(
       })
       .returning();
 
-    const result = await provider.executeFunding({
-      fundingAuthorizationId: funding.id,
-      idempotencyKey: input.idempotencyKey,
-      fromProviderRef: master.providerRef,
-      toProviderRef: wallet.providerRef,
-      amountUnits: amount,
-    });
+    // A confirmed on-chain transfer has already happened; a simulated one is acknowledged by its provider.
+    const result: FundingResult = onChain
+      ? { status: "executed", providerRef: onChain.hash }
+      : await provider.executeFunding({
+          fundingAuthorizationId: funding.id,
+          idempotencyKey: input.idempotencyKey,
+          fromProviderRef: master.providerRef,
+          toProviderRef: wallet.providerRef,
+          amountUnits: amount,
+        });
     if (result.status === "failed") {
       const [failed] = await tx
         .update(fundingAuthorizations)
@@ -552,11 +631,14 @@ export async function authorizeFunding(
     }
 
     const amountSql = sql`${amount.toString()}::numeric`;
-    const [debited] = await tx
-      .update(masterWalletAccounts)
-      .set({ balanceUnits: sql`${masterWalletAccounts.balanceUnits} - ${amountSql}` })
-      .where(eq(masterWalletAccounts.id, master.id))
-      .returning();
+    // The platform keeps no balance for the buyer's own wallet: only a simulated account is debited.
+    const [debited] = onChain
+      ? [master]
+      : await tx
+          .update(masterWalletAccounts)
+          .set({ balanceUnits: sql`${masterWalletAccounts.balanceUnits} - ${amountSql}` })
+          .where(eq(masterWalletAccounts.id, master.id))
+          .returning();
     const [credited] = await tx
       .update(engagementWallets)
       .set({
@@ -566,16 +648,20 @@ export async function authorizeFunding(
       .where(eq(engagementWallets.id, wallet.id))
       .returning();
     await tx.insert(walletLedgerEntries).values([
-      {
-        organizationId: engagement.organizationId,
-        rail: engagement.rail,
-        masterWalletAccountId: master.id,
-        kind: "funding_debit",
-        deltaUnits: -amount,
-        balanceAfterUnits: debited.balanceUnits,
-        fundingAuthorizationId: funding.id,
-        actorUserId: who.userId,
-      },
+      ...(onChain
+        ? []
+        : [
+            {
+              organizationId: engagement.organizationId,
+              rail: engagement.rail,
+              masterWalletAccountId: master.id,
+              kind: "funding_debit" as const,
+              deltaUnits: -amount,
+              balanceAfterUnits: debited.balanceUnits,
+              fundingAuthorizationId: funding.id,
+              actorUserId: who.userId,
+            },
+          ]),
       {
         organizationId: engagement.organizationId,
         rail: engagement.rail,
@@ -751,6 +837,8 @@ export type EngagementDetail = {
   } | null;
   /** The organization's master account on this engagement's rail, if set up. */
   masterBalanceUnits: bigint | null;
+  /** For a real engagement: the buyer's own wallet that has funded it, once it has. */
+  fundingWallet: string | null;
   agent: { status: AgentStatus } | null;
   fundings: Array<{
     id: string;
@@ -759,6 +847,8 @@ export type EngagementDetail = {
     isSimulated: boolean;
     authorizedAt: Date;
     failureReason: string | null;
+    /** For a real funding: the hash of the transfer the chain confirmed. */
+    transactionHash: string | null;
   }>;
   events: Array<{
     id: string;
@@ -812,12 +902,17 @@ export async function getEngagementDetail(
     .where(eq(engagementWallets.engagementId, engagement.id));
   const [master] = engagement.rail
     ? await db
-        .select({ balanceUnits: masterWalletAccounts.balanceUnits })
+        .select({
+          balanceUnits: masterWalletAccounts.balanceUnits,
+          providerRef: masterWalletAccounts.providerRef,
+        })
         .from(masterWalletAccounts)
         .where(
           and(
             eq(masterWalletAccounts.organizationId, engagement.organizationId),
             eq(masterWalletAccounts.rail, engagement.rail),
+            // The account this engagement draws on: simulated for a simulated engagement, the buyer's own for a real one.
+            eq(masterWalletAccounts.isSimulated, engagement.settlement === "simulated"),
           ),
         )
     : [];
@@ -894,6 +989,7 @@ export async function getEngagementDetail(
         }
       : null,
     masterBalanceUnits: master?.balanceUnits ?? null,
+    fundingWallet: engagement.settlement === "simulated" ? null : (master?.providerRef ?? null),
     agent: agent ?? null,
     fundings: fundings.map((f) => ({
       id: f.id,
@@ -902,6 +998,7 @@ export async function getEngagementDetail(
       isSimulated: f.isSimulated,
       authorizedAt: f.authorizedAt,
       failureReason: f.failureReason,
+      transactionHash: f.isSimulated ? null : f.providerRef,
     })),
     events: events.map(({ event, actorName }) => ({
       id: event.id,
@@ -912,4 +1009,50 @@ export async function getEngagementDetail(
       createdAt: event.createdAt,
     })),
   };
+}
+
+export type WalletChainState = {
+  /** What the wallet holds of the payment token, on the chain. */
+  tokenUnits: bigint;
+  /** What it holds of the native asset, which pays network fees. */
+  gasUnits: bigint;
+  gasSymbol: string;
+  gasDecimals: number;
+};
+
+/**
+ * What the chain says a real engagement wallet holds, read at this moment.
+ * Shown beside the platform's own record so the two can be compared. Null for
+ * a simulated wallet, and when the chain cannot be read.
+ */
+export async function getWalletChainState(
+  actor: Actor | null,
+  engagementId: string,
+): Promise<WalletChainState | null> {
+  assertAuthenticated(actor);
+  if (!isUuid(engagementId)) throw notFound("Engagement");
+  const db = getDb();
+  const [engagement] = await db.select().from(engagements).where(eq(engagements.id, engagementId));
+  await requirePermissionOnRecord(actor, engagement, "engagement.view", "Engagement");
+  const [wallet] = await db
+    .select()
+    .from(engagementWallets)
+    .where(eq(engagementWallets.engagementId, engagement.id));
+  if (!wallet || wallet.isSimulated || !engagement.rail) return null;
+  try {
+    const provider = getGoatWalletProvider();
+    const [tokenUnits, gasUnits] = await Promise.all([
+      provider.getBalance({ providerRef: wallet.providerRef }),
+      provider.getGasBalance(wallet.providerRef),
+    ]);
+    if (tokenUnits === null || gasUnits === null) return null;
+    return {
+      tokenUnits,
+      gasUnits,
+      gasSymbol: GOAT_TESTNET3.nativeCurrency.symbol,
+      gasDecimals: GOAT_TESTNET3.nativeCurrency.decimals,
+    };
+  } catch {
+    return null;
+  }
 }

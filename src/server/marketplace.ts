@@ -5,6 +5,7 @@ import type { BillingUnit, EndpointProtocol, ListingStatus } from "@/db/schema";
 import { isWeb3Capability } from "@/lib/capabilities";
 import { findPublicIdentity, type PublicIdentity } from "./identity";
 import { qatomItemFor } from "./qatom/config";
+import { currentSettlement } from "./wallets/registry";
 
 const { sellerProfiles, serviceOfferings, serviceEndpoints } = schema;
 
@@ -51,6 +52,8 @@ export type PublicSellerDetail = PublicSeller & {
   qatomCatalogItemId: number | null;
   /** The seller's ERC-8004 identity on GOAT, as last read from the chain. Null when none is linked. */
   identity: PublicIdentity | null;
+  /** True when a new engagement with this seller would pay for real on GOAT Testnet3 rather than be simulated. */
+  settlesOnGoat: boolean;
 };
 
 const publicSellerColumns = {
@@ -142,12 +145,15 @@ export async function loadPublicSellerDetail(sellerProfileId: string): Promise<P
     .select({ protocol: serviceEndpoints.protocol })
     .from(serviceEndpoints)
     .where(eq(serviceEndpoints.sellerProfileId, row.id));
+  const identity = await findPublicIdentity(row.id);
   return {
     ...toPublicSeller(row, offerings),
     offerings: offerings.map(toPublicOffering),
     endpointProtocol: endpoint?.protocol ?? null,
     qatomCatalogItemId: qatomItemFor(row.slug),
-    identity: await findPublicIdentity(row.id),
+    identity,
+    settlesOnGoat:
+      currentSettlement() === "goat_testnet3" && identity !== null && identity.confirmed && identity.agentWalletSet,
   };
 }
 

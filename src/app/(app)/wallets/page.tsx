@@ -8,6 +8,7 @@ import {
   SimulatedBadge,
   WalletStatusBadge,
 } from "@/components/engagements/badges";
+import { ChainLink } from "@/components/goat/chain-link";
 import { railLabel } from "@/lib/capabilities";
 import { formatUnits } from "@/lib/units";
 import { roleHasPermission } from "@/server/authz";
@@ -59,7 +60,32 @@ async function WalletsContent() {
       />
 
       <section aria-label="Master accounts" className="grid gap-4 lg:grid-cols-2">
-        {overview.rails.map((rail) => (
+        {overview.rails.map((rail) =>
+          rail.fundingWallet ? (
+            <div key={`funding-${rail.rail}`} className="rounded-xl border border-border bg-card p-5">
+              <p className="eyebrow">Your funding wallet</p>
+              <h2 className="mt-1 text-lg font-semibold text-foreground">GOAT Testnet3</h2>
+              <dl className="mt-5 space-y-4">
+                <div className="min-w-0">
+                  <dt className="text-xs text-muted-foreground">Address</dt>
+                  <dd className="mt-1 text-sm">
+                    <ChainLink value={rail.fundingWallet} />
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">In engagement wallets</dt>
+                  <dd className="figure mt-1 text-xl whitespace-nowrap text-foreground">
+                    {formatUnits(rail.allocatedUnits, rail.asset)}
+                  </dd>
+                </div>
+              </dl>
+              <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
+                This is your own wallet. 905 Finance holds no key to it and cannot move anything out
+                of it: you fund an engagement by sending to that engagement&apos;s wallet yourself.
+                Test assets only.
+              </p>
+            </div>
+          ) : (
           <div key={rail.rail} className="rounded-xl border border-border bg-card p-5">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -103,7 +129,8 @@ async function WalletsContent() {
               </div>
             ) : null}
           </div>
-        ))}
+          ),
+        )}
       </section>
 
       <Panel
@@ -131,7 +158,9 @@ async function WalletsContent() {
                     <p className="truncate text-sm text-muted-foreground">
                       {wallet.projectName} · {railLabel(wallet.rail)}
                     </p>
-                    <p className="figure truncate text-xs text-muted-foreground">{wallet.providerRef}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      <ChainLink value={wallet.providerRef} />
+                    </p>
                   </div>
                   <div className="flex items-center gap-3 sm:flex-col sm:items-end sm:gap-1.5">
                     <p className="figure text-base text-foreground">

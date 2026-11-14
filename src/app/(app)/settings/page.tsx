@@ -7,6 +7,8 @@ import { ListingStatusBadge } from "@/components/sellers/badges";
 import { Button } from "@/components/ui/button";
 import { NETWORK_ROLES } from "@/lib/capabilities";
 import { requireWorkspace } from "@/server/page-context";
+import { ChainLink } from "@/components/goat/chain-link";
+import { goatLiveConfig } from "@/server/goat/live";
 import { getQatomStatus } from "@/server/qatom/connection";
 import { EnableRoleForm } from "../enable-role-form";
 import { ConnectQatomForm, DisconnectQatomForm } from "./qatom-forms";
@@ -35,6 +37,7 @@ async function SettingsContent({ searchParams }: { searchParams: Promise<Record<
   const notice = typeof raw === "string" ? raw : "";
   // Linking Qatom is for organizations that buy: it carries their agents' messages.
   const qatom = workspace.buyerProfile ? await getQatomStatus(actor, workspace.organization.id) : null;
+  const goat = goatLiveConfig();
 
   return (
     <div className="space-y-8">
@@ -160,12 +163,34 @@ async function SettingsContent({ searchParams }: { searchParams: Promise<Record<
         </Panel>
       ) : null}
 
-      <Panel title="GOAT Network" action={<NotYetActive />}>
-        <p className="text-sm leading-relaxed text-muted-foreground">
-          {NETWORK_ROLES.settlement.role}. {NETWORK_ROLES.settlement.detail} Wallets and payments are
-          simulated until the GOAT integration is connected. Connecting an account will never
-          authorize spending by itself.
-        </p>
+      <Panel
+        title="GOAT Network"
+        description={`${NETWORK_ROLES.settlement.role}. ${NETWORK_ROLES.settlement.detail}`}
+        action={goat ? null : <NotYetActive>Simulated</NotYetActive>}
+      >
+        {goat ? (
+          <>
+            <dl className="-my-3 divide-y divide-border">
+              <Row label="Settlement">
+                <span className="text-brand">Real, on GOAT Testnet3</span>
+              </Row>
+              <Row label="Paid in">
+                {goat.token.symbol} · <ChainLink value={goat.token.address} short />
+              </Row>
+            </dl>
+            <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
+              New engagements with a seller that has a confirmed GOAT identity and receiving wallet
+              get a real wallet and pay through GOAT Flow. Others stay simulated. Testnet3 assets are
+              for testing and have no monetary value. Your funding wallet is your own: you fund each
+              engagement by sending to its wallet yourself.
+            </p>
+          </>
+        ) : (
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            Seller identity and reputation are read from GOAT Testnet3 today. Wallets and payments
+            are simulated here until real settlement is switched on for this deployment.
+          </p>
+        )}
       </Panel>
     </div>
   );

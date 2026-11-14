@@ -381,6 +381,12 @@ export const engagements = pgTable(
       onDelete: "restrict",
     }),
     rail: paymentRail("rail"),
+    /**
+     * Whether this engagement's wallet and payments are simulated or are real
+     * ones on GOAT Testnet3. Decided when the mandate is drafted, and fixed
+     * once the engagement is authorized.
+     */
+    settlement: text("settlement").$type<"simulated" | "goat_testnet3">().notNull().default("simulated"),
     state: engagementState("state").notNull().default("DISCOVERING"),
     stateChangedAt: timestamp("state_changed_at", { withTimezone: true }).notNull().defaultNow(),
     authorizedAt: timestamp("authorized_at", { withTimezone: true }),
@@ -540,7 +546,9 @@ export const masterWalletAccounts = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => [
-    unique("master_wallet_accounts_org_rail_uq").on(t.organizationId, t.rail),
+    // An organization may have a simulated account and a real one on the same
+    // rail. They are separate accounts and are never drawn on together.
+    unique("master_wallet_accounts_org_rail_uq").on(t.organizationId, t.rail, t.isSimulated),
     unique("master_wallet_accounts_provider_ref_uq").on(t.provider, t.providerRef),
     unique("master_wallet_accounts_id_rail_uq").on(t.id, t.rail),
     check("master_wallet_accounts_balance_nonnegative", sql`${t.balanceUnits} >= 0`),
@@ -565,6 +573,8 @@ export const engagementWallets = pgTable(
     assetDecimals: integer("asset_decimals").notNull(),
     provider: text("provider").notNull(),
     providerRef: text("provider_ref").notNull(),
+    /** The wallet provider's own handle for the key, when the reference above is a chain address. Never shown. */
+    custodyRef: text("custody_ref"),
     status: walletStatus("status").notNull().default("provisioning"),
     balanceUnits: units("balance_units").notNull().default(sql`0`),
     isSimulated: boolean("is_simulated").notNull().default(true),
@@ -634,6 +644,10 @@ export const fundingAuthorizations = pgTable(
       foreignColumns: [masterWalletAccounts.id, masterWalletAccounts.rail],
     }).onDelete("restrict"),
     index("funding_authorizations_engagement_idx").on(t.engagementId, t.createdAt),
+    // One on-chain transfer funds one authorization, once.
+    uniqueIndex("funding_authorizations_real_ref_uq")
+      .on(t.providerRef)
+      .where(sql`${t.isSimulated} = false AND ${t.providerRef} IS NOT NULL`),
     check("funding_authorizations_amount_positive", sql`${t.amountUnits} > 0`),
   ],
 );
@@ -1024,6 +1038,39 @@ export const qatomDispatches = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// GOAT Flow: one order per payment attempt
+// ---------------------------------------------------------------------------
+
+/**
+ * A GOAT Flow order created for one payment attempt, and what became of it.
+ * The row is written before GOAT Flow is asked for anything, so an attempt
+ * whose outcome was lost can be found and reconciled instead of repeated.
+ */
+export const goatFlowOrders = pgTable("goat_flow_orders", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  /** The payment attempt's key. One order per attempt, ever. */
+  idempotencyKey: text("idempotency_key").notNull().unique(),
+  /** Our identifier, sent to GOAT Flow. Duplicates are rejected there too. */
+  dappOrderId: text("dapp_order_id").notNull().unique(),
+  /** GOAT Flow's identifier, once it has answered. */
+  orderId: text("order_id"),
+  tokenContract: text("token_contract").notNull(),
+  fromAddress: text("from_address").notNull(),
+  /** Where GOAT Flow said to pay. Compared with the mandate's recipient before anything is sent. */
+  payToAddress: text("pay_to_address"),
+  amountUnits: units("amount_units").notNull(),
+  /** creating, creation_unknown, payable, sent, confirmed, failed. */
+  status: text("status").notNull().default("creating"),
+  /** GOAT Flow's own status for the order, as last read. */
+  flowStatus: text("flow_status"),
+  /** The transfer's transaction hash, saved before waiting on it. */
+  transactionHash: text("transaction_hash").unique(),
+  failureReason: text("failure_reason"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+// ---------------------------------------------------------------------------
 // Testing: jobs, results and findings
 // ---------------------------------------------------------------------------
 
@@ -1199,6 +1246,8 @@ export type ApprovalRequest = typeof approvalRequests.$inferSelect;
 export type AgentMessage = typeof agentMessages.$inferSelect;
 export type QatomConnection = typeof qatomConnections.$inferSelect;
 export type SellerIdentity = typeof sellerIdentities.$inferSelect;
+export type GoatFlowOrder = typeof goatFlowOrders.$inferSelect;
+export type Settlement = "simulated" | "goat_testnet3";
 export type TestingJob = typeof testingJobs.$inferSelect;
 export type TestingResult = typeof testingResults.$inferSelect;
 export type Finding = typeof findings.$inferSelect;

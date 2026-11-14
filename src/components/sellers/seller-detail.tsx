@@ -138,7 +138,13 @@ export function SellerDetail({
             <FactRow label="Payment">
               <span className="flex flex-col items-end gap-1">
                 <span>{NETWORK_ROLES.settlement.name}, in USD</span>
-                <span className="text-xs text-muted-foreground">Simulated until connected</span>
+                <span className="text-xs text-muted-foreground">
+                  {seller.settlesOnGoat
+                    ? "Paid on GOAT Testnet3, in test assets"
+                    : seller.identity?.confirmed
+                      ? "Simulated: real settlement is not switched on"
+                      : "Simulated: no confirmed GOAT identity to pay"}
+                </span>
               </span>
             </FactRow>
             <FactRow label="Agent communication">
@@ -200,7 +206,10 @@ export function SellerDetail({
               </>
             ) : null}
             <FactRow label="On-chain reputation">
-              {seller.identity && seller.identity.reputation.count > 0 ? (
+              {seller.identity && !seller.identity.confirmed ? (
+                // An unconfirmed claim must not borrow the standing of the agent it names.
+                <span className="text-muted-foreground">Shown once the identity is confirmed</span>
+              ) : seller.identity && seller.identity.reputation.count > 0 ? (
                 <span className="flex flex-col items-end gap-1">
                   <span className="figure">{seller.identity.reputation.value}</span>
                   <span className="text-xs text-muted-foreground">

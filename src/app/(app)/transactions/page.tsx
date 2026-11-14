@@ -4,6 +4,7 @@ import Link from "next/link";
 import { EmptyState, PageHeader, Panel } from "@/components/app/page-header";
 import { PageSkeleton } from "@/components/app/page-skeleton";
 import { SimulatedBadge } from "@/components/engagements/badges";
+import { ChainLink } from "@/components/goat/chain-link";
 import { railLabel } from "@/lib/capabilities";
 import { formatUnits } from "@/lib/units";
 import { requireWorkspace } from "@/server/page-context";
@@ -90,9 +91,11 @@ async function TransactionsContent() {
                   </div>
                   <dl className="grid gap-x-4 gap-y-0.5 text-xs text-muted-foreground sm:grid-cols-[7rem_minmax(0,1fr)]">
                     <dt>Reference</dt>
-                    <dd className="figure break-all">{payment.providerRef ?? "None yet"}</dd>
+                    <dd>{payment.providerRef ? <ChainLink value={payment.providerRef} /> : "None yet"}</dd>
                     <dt>Paid to</dt>
-                    <dd className="figure break-all">{payment.recipient}</dd>
+                    <dd>
+                      <ChainLink value={payment.recipient} />
+                    </dd>
                     {payment.failureReason ? (
                       <>
                         <dt>Detail</dt>

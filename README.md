@@ -17,7 +17,7 @@ The product is being built in seven milestones, one at a time.
 | 3 | Purchasing agent and human controls | **Complete** |
 | 4 | Real software testing services | **Complete** |
 | 5 | Qatom: agent communication | **Built**; live run awaits a Qatom sign-in and catalog items |
-| 6 | GOAT Network: ERC-8004 identity and payment | Not started |
+| 6 | GOAT Network: ERC-8004 identity and payment | Identity and reputation **live on Testnet3**; wallets and payments **built**, awaiting Privy, a GOAT Flow test merchant and test funds |
 | 7 | End-to-end integration and deployment | Not started |
 
 ### What works today (Milestone 1)
@@ -75,7 +75,7 @@ Every engagement uses two networks together, each for one job. They are not alte
 | | Job | State |
 |---|---|---|
 | **Qatom** | Carries the conversation between the buyer's agent and the seller's agent. No money moves through it. | Built and tested against a stand-in for Qatom. Not yet run against Qatom itself. |
-| **GOAT Network** | Identifies the seller (ERC-8004) and is where every payment is made, in USD. | Payments are simulated until Milestone 6. |
+| **GOAT Network** | Identifies the seller (ERC-8004) and is where every payment is made, in USD. | See Milestone 6 below. |
 
 - **One settlement network.** A mandate no longer has a payment rail to choose: every engagement pays on GOAT, and a request naming any other network is refused.
 - **Linking a Qatom account.** An owner signs in at Qatom (on Qatom's pages, with PKCE); the application stores the resulting tokens encrypted and uses them only to send its agents' messages. Linking authorizes no payment.
@@ -85,6 +85,19 @@ Every engagement uses two networks together, each for one job. They are not alte
 - **Every message records its carrier.** The engagement page shows whether a message went over Qatom, with Qatom's transaction id, or over the in-app demo channel.
 
 Until a Qatom account is linked and a seller has a catalog item, agents reach the sample sellers over the in-app demo channel, which is labelled as such.
+
+### What works today (Milestone 6)
+
+- **ERC-8004 identity, read from GOAT Testnet3.** A seller links its listing to an agent id and supplies nothing else. The owner, the receiving wallet, the registration document and the reputation summary are read from the registries and shown with explorer links. This part is live and needs no credentials.
+- **A link has to be returned.** It is confirmed only when the agent's own registration document names the listing. Until then it is an unconfirmed claim: its reputation is not shown and its wallet is never a payment destination. One agent can be linked to one listing.
+- **Real settlement, per engagement.** When GOAT Testnet3 settlement is configured and the seller has a confirmed identity with a wallet set in the registry, a new engagement gets a real wallet and pays for real. Otherwise it is simulated. Which one it is, is fixed when the engagement is authorized, in the database as well as in code.
+- **One wallet per engagement, held by Privy.** The application never has a private key. It asks Privy to sign one token transfer and broadcasts it itself.
+- **Funding by the buyer, confirmed from the chain.** The buyer's funding wallet is their own; the platform cannot move anything out of it. The buyer sends the transfer, then authorizes it with the transaction hash, and it is credited only when the chain shows exactly that amount of that token arriving at that engagement's wallet. One transfer is credited once.
+- **Payments through GOAT Flow.** One payment is one GOAT Flow order and one token transfer to the address the order names, which must be the seller's verified wallet, for the approved amount, in the configured token, on Testnet3. If any of that differs, nothing is sent. Success is recorded only after the transfer is read back from the chain.
+- **Nothing is retried blind.** Each step of a payment is written down before it is taken. An order whose creation went unanswered, or a transfer that may or may not have been broadcast, is held for reconciliation and never repeated.
+- **The recorded balance decides what can be spent,** not the chain balance: tokens sent to a wallet without a funding authorization cannot be spent.
+
+**What is real and what is not.** Identity and reputation reads are real and were checked against Testnet3. Real wallets and payments are complete in code and tested against stand-ins for Privy, GOAT Flow and the chain; they have **not** been run against the real services, because that needs a Privy app secret, an approved GOAT Flow test merchant with a fee balance, and test tokens. Everything is Testnet3: assets there have no monetary value, and the production GOAT Flow API is refused.
 
 ### What is deliberately not here yet
 
@@ -219,6 +232,42 @@ buyer's agent ◀── verifies signed reply ◀── receipt ◀── Qatom 
 
 Qatom may ask for the owner's approval before running even a free item. If it does, the message is not delivered; setting an auto-approve limit in Qatom lets free items through.
 
+## GOAT Network
+
+```
+seller ── registers agent (own wallet) ──▶ ERC-8004 Identity Registry (Testnet3)
+                                              │  owner, receiving wallet, registration document
+905 Finance ── reads only ───────────────────┘  + Reputation Registry summary
+
+buyer's wallet ── sends token ──▶ engagement wallet (Privy)        confirmed from the chain, then credited
+engagement wallet ── transfer ──▶ seller's registry wallet         one GOAT Flow order per payment
+                                  └── read back from the chain before the purchase counts as paid
+```
+
+### Linking a seller's identity
+
+1. Register the agent in the Identity Registry on GOAT Testnet3 (`0x54B8d8E2455946f2A5B8982283f2359812e815ce`) from your own wallet. 905 Finance does not register agents or hold a key that could.
+2. In its registration document, add this listing to `services` (the listing page shows the exact entry) and make sure `registrations` names the registry and agent id.
+3. Enter the agent id on the Listing page. For a sample seller, an operator runs `pnpm seller:identity <slug> <agent-id>`; the same confirmation rule applies.
+4. To be paid at a wallet other than the owner's, set it with `setAgentWallet` in the registry. A seller with no wallet set in the registry is not paid.
+
+### Switching on real settlement
+
+Set the GOAT values in `.env.example` (and the Privy credentials). You need:
+
+- a **GOAT Flow test merchant** from https://flow-merchant.testnet3.goat.network: it must be approved, hold a fee balance, and have a receiving address **equal to the seller's registry wallet**, because GOAT Flow pays the merchant's configured address and this application refuses to pay anywhere else;
+- the **USD token** that merchant is configured for (its contract address, symbol and decimals);
+- **test assets**: the buyer needs that token in their own wallet, and each engagement wallet needs a little test BTC for network fees (it pays its own).
+
+Until all of it is set, every engagement is simulated and says so.
+
+### What cannot happen
+
+- The application cannot be pointed at a network where assets have value: the chain is checked to be 48816, and only the Testnet3 payment API is accepted.
+- An agent cannot choose where money goes. The recipient is fixed when the buyer authorizes the engagement, to the wallet the registry names at that moment.
+- A simulated engagement cannot become a real one, or the reverse, after it is authorized.
+- A failed or uncertain payment is never retried through another provider, and never re-sent.
+
 ## Deploying to Vercel
 
 Import the repository in Vercel, then add these in **Project → Settings → Environment Variables** before the first visit:
@@ -257,6 +306,7 @@ If a setting is missing, the server logs which one at startup. Public pages stil
 | `pnpm db:migrate` | Apply migrations |
 | `pnpm db:seed` | Seed the sample sellers (safe to re-run) |
 | `pnpm seller:activate <slug>` | Activate a listing awaiting review |
+| `pnpm seller:identity <slug> <agent-id>` | Link a sample seller to its ERC-8004 agent, reading GOAT Testnet3 |
 | `pnpm qatom:item <slug> "<name>" <url>` | Print what to enter in the Qatom dashboard for a seller's catalog item |
 
 ## How it is put together
@@ -271,6 +321,8 @@ src/server/            authentication, permissions, data-access layer, audit
 src/server/wallets/    wallet-provider interface and the simulated provider
 src/server/payments/   payment-provider interface and the demo provider
 src/server/agent/      agent runtime, brain interface, seller transport and demo seller
+src/server/goat/       Testnet3 access, ERC-8004 reads, GOAT Flow client, the signer, guarded document fetch
+src/server/identity.ts linking a listing to its on-chain identity
 src/server/qatom/      Qatom account link, signed messages, MCP client, seller endpoint checks
 src/server/seller-agent/  the sample sellers' side of a conversation
 src/server/testing/    job queue, worker endpoints' logic, reports
@@ -385,5 +437,9 @@ The suite runs the real migrations in an in-process Postgres and exercises the d
 - Qatom: linking being the owner's decision alone and refused on any mismatch; tokens encrypted and never shown; refresh spent once under simultaneous use; messages refused when altered, replayed, stale or claimed for another engagement; replies refused when forged, altered or swapped; the seller endpoint closed without its secret, serving each delivery once, and refusing what Qatom does not vouch for; an agent unable to approve anything at Qatom; and no silent change of channel on an outage.
 
 The Qatom suite runs against a stand-in built from Qatom's published behaviour, not against Qatom itself.
+
+- GOAT: the application refusing any chain but Testnet3; a transfer confirmed only when token, sender, recipient and amount all match and it has blocks on top; registration documents never fetched from a private address or through a redirect; a link confirmed only when the agent names the listing, and never payable otherwise; real settlement off unless fully configured; funding credited once, from one wallet, for exactly the transfer the chain shows; a payment sending nothing when GOAT Flow's terms differ from the ones approved; unknown outcomes held rather than repeated; and simulated and real engagements never crossing over.
+
+The GOAT suite runs against stand-ins for the chain, Privy and GOAT Flow. The ERC-8004 reader was also run by hand against real agents on Testnet3.
 
 The testing suite also **executes the real tools** against the bundled fixtures, through the same worker code and submission path the application uses, and asserts the figures they report (for example, Vitest: 6 tests, 5 passed, 1 failed). The Vitest cases always run; the Foundry and Slither cases run when those tools are on `PATH` and are skipped otherwise.

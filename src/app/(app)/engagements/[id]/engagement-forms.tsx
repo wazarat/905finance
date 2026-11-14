@@ -301,6 +301,94 @@ export function FundingForm({
   );
 }
 
+/**
+ * Funding a real wallet. The buyer sends the transfer themselves, from their
+ * own wallet; this form records the transaction so the platform can confirm
+ * it on the chain. The platform cannot send it for them.
+ */
+export function ChainFundingForm({
+  engagementId,
+  idempotencyKey,
+  assetCode,
+  walletAddress,
+  fundingWallet,
+  suggestedAmount,
+  submitLabel,
+}: {
+  engagementId: string;
+  idempotencyKey: string;
+  assetCode: string;
+  walletAddress: string;
+  fundingWallet: string | null;
+  suggestedAmount: string;
+  submitLabel: string;
+}) {
+  const [state, action] = useActionState(authorizeFundingAction, initialFormState);
+  const errors = state.ok ? {} : (state.fieldErrors ?? {});
+  return (
+    <form action={action} className="space-y-5" noValidate>
+      <input type="hidden" name="engagementId" value={engagementId} />
+      <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
+      <ol className="space-y-2 text-sm leading-relaxed text-ink-soft">
+        <li>
+          <span className="font-medium text-foreground">1. Send {assetCode}</span> on GOAT Testnet3 from{" "}
+          {fundingWallet ? (
+            <>
+              your funding wallet <span className="figure break-all text-foreground">{fundingWallet}</span>
+            </>
+          ) : (
+            "your own wallet"
+          )}{" "}
+          to this engagement&apos;s wallet:
+          <span className="figure mt-1 block break-all text-foreground">{walletAddress}</span>
+        </li>
+        <li>
+          <span className="font-medium text-foreground">2. Enter the amount and the transaction hash</span>{" "}
+          below. The amount is credited once the chain confirms exactly that transfer.
+        </li>
+      </ol>
+      <div className="grid gap-5 sm:grid-cols-[12rem_minmax(0,1fr)]">
+        <Field id="funding-amount" label={`Amount sent (${assetCode})`} errors={errors.amount}>
+          <Input
+            id="funding-amount"
+            name="amount"
+            inputMode="decimal"
+            defaultValue={echoed(state, "amount", suggestedAmount)}
+            aria-invalid={Boolean(errors.amount)}
+            className="figure h-10"
+          />
+        </Field>
+        <Field id="funding-hash" label="Transaction hash" errors={errors.transactionHash}>
+          <Input
+            id="funding-hash"
+            name="transactionHash"
+            placeholder="0x…"
+            autoComplete="off"
+            spellCheck={false}
+            defaultValue={echoed(state, "transactionHash", "")}
+            aria-invalid={Boolean(errors.transactionHash)}
+            className="figure h-10"
+          />
+        </Field>
+      </div>
+      <label className={confirmCard}>
+        <input type="checkbox" name="confirmed" className="mt-0.5 size-4 shrink-0 accent-[var(--brand)]" />
+        <span className="text-sm leading-relaxed text-ink-soft">
+          <span className="font-medium text-foreground">
+            I sent this transfer and authorize it as funding for this engagement.
+          </span>{" "}
+          It can be spent only under this engagement&apos;s mandate.
+        </span>
+      </label>
+      <FieldError id="confirmed-error" messages={errors.confirmed} />
+      <div className="flex flex-wrap items-center gap-3">
+        <SubmitButton pendingLabel="Checking the chain…">{submitLabel}</SubmitButton>
+        {errors.amount || errors.transactionHash || errors.confirmed ? null : <Status state={state} />}
+      </div>
+    </form>
+  );
+}
+
 export function CancelEngagementForm({ engagementId }: { engagementId: string }) {
   const [state, action] = useActionState(cancelEngagementAction, initialFormState);
   const [confirming, setConfirming] = useState(false);

@@ -69,32 +69,31 @@ class FakeChain {
   down = false;
 
   client(): PublicClient {
-    const self = this;
     return {
-      async getChainId() {
-        if (self.down) throw new Error("rpc down");
-        return self.chainId;
+      getChainId: async () => {
+        if (this.down) throw new Error("rpc down");
+        return this.chainId;
       },
-      async getBlockNumber() {
-        if (self.down) throw new Error("rpc down");
-        return self.head;
+      getBlockNumber: async () => {
+        if (this.down) throw new Error("rpc down");
+        return this.head;
       },
-      async getBalance({ address }: { address: Address }) {
-        return self.balances.get(`native:${address}`) ?? 0n;
+      getBalance: async ({ address }: { address: Address }) => {
+        return this.balances.get(`native:${address}`) ?? 0n;
       },
-      async getTransactionReceipt({ hash }: { hash: Hash }) {
-        const receipt = self.receipts.get(hash);
+      getTransactionReceipt: async ({ hash }: { hash: Hash }) => {
+        const receipt = this.receipts.get(hash);
         if (!receipt) throw new Error("not found");
         return receipt;
       },
-      async readContract({ address, functionName, args }: { address: Address; functionName: string; args?: readonly unknown[] }) {
-        if (self.down) throw new Error("rpc down");
+      readContract: async ({ address, functionName, args }: { address: Address; functionName: string; args?: readonly unknown[] }) => {
+        if (this.down) throw new Error("rpc down");
         if (address === TOKEN) {
           if (functionName === "symbol") return "USDC";
           if (functionName === "decimals") return 6;
-          if (functionName === "balanceOf") return self.balances.get(`token:${args![0]}`) ?? 0n;
+          if (functionName === "balanceOf") return this.balances.get(`token:${args![0]}`) ?? 0n;
         }
-        const agent = self.agents.get(args![0] as bigint);
+        const agent = this.agents.get(args![0] as bigint);
         if (address === ERC8004_TESTNET3.identityRegistry) {
           if (!agent) throw new Error("ERC721NonexistentToken");
           if (functionName === "ownerOf") return agent.owner;

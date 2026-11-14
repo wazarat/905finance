@@ -6,6 +6,7 @@ import { ArrowLeft, Download } from "lucide-react";
 import { PageHeader, Panel } from "@/components/app/page-header";
 import { PageSkeleton } from "@/components/app/page-skeleton";
 import { SimulatedBadge } from "@/components/engagements/badges";
+import { ChainLink } from "@/components/goat/chain-link";
 import { AutoRefresh } from "@/components/testing/auto-refresh";
 import { JobBadge, SeverityBadge, SeverityTally } from "@/components/testing/badges";
 import { Button } from "@/components/ui/button";
@@ -208,7 +209,7 @@ async function ReportContent({ params }: { params: Promise<{ jobId: string }> })
             {report.isSimulatedPayment ? <SimulatedBadge className="ml-2" label="Payment simulated" /> : null}
           </Fact>
           <Fact label="Payment reference">
-            <span className="figure break-all">{report.paymentReference ?? "None"}</span>
+            {report.paymentReference ? <ChainLink value={report.paymentReference} /> : "None"}
             {report.paymentRail ? (
               <span className="block text-xs text-muted-foreground">{railLabel(report.paymentRail)}</span>
             ) : null}

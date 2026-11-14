@@ -279,7 +279,7 @@ async function prepare(request: PurchaseRequest): Promise<Prepared> {
     }
 
     // 3. The recipient is the one the mandate authorizes, whatever the seller asked for.
-    const provider = getPaymentProvider(engagement.rail);
+    const provider = getPaymentProvider(engagement.rail, engagement.settlement);
     const authorizedRecipient =
       mandate.authorizedRecipient ??
       (provider.simulated ? simulatedRecipient(engagement.rail, engagement.sellerProfileId) : null);
@@ -697,7 +697,8 @@ export async function reconcilePurchase(actor: Actor | null, purchaseId: string)
     return row;
   });
 
-  const provider = getPaymentProvider(attempt.rail);
+  // The provider the attempt was made with: a real payment is never reconciled against the demo, or the reverse.
+  const provider = getPaymentProvider(attempt.rail, attempt.isSimulated ? "simulated" : "goat_testnet3");
   let settlement: Settlement;
   try {
     const status = await provider.getPaymentStatus({

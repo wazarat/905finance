@@ -7,6 +7,7 @@ import type { AgentToSeller, SellerReply } from "../agent/transport";
 import { isUuid } from "../authz";
 import { offeringPriceUnits } from "../budget";
 import { isAppError } from "../errors";
+import { verifiedReceivingWallet } from "../identity";
 import { simulatedRecipient } from "../payments/registry";
 import { enqueueTestingJob, fulfilmentBlocker } from "../testing/jobs";
 
@@ -90,13 +91,20 @@ export async function answerAsSampleSeller(
     // Decline before any payment if the test could not actually be run.
     const blocker = await fulfilmentBlocker(project, offering.capability);
     if (blocker) return refuse(blocker);
+    // Where the seller asks to be paid: its simulated account, or, for an
+    // engagement that settles on GOAT, the wallet its confirmed identity names.
+    const recipient =
+      engagement.settlement === "simulated"
+        ? simulatedRecipient(engagement.rail, seller.id)
+        : await verifiedReceivingWallet(seller.id);
+    if (!recipient) return refuse("This seller has no confirmed receiving wallet on GOAT Network.");
     return {
       kind: "quote",
       offeringId: offering.id,
       quantity: message.quantity,
       asset: mandate.asset,
       amountUnits: price.toString(),
-      recipient: simulatedRecipient(engagement.rail, seller.id),
+      recipient,
     };
   }
 

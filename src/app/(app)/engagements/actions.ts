@@ -105,6 +105,7 @@ export async function authorizeFundingAction(_prev: FormState, formData: FormDat
       amount: text(formData, "amount"),
       idempotencyKey: text(formData, "idempotencyKey"),
       confirmed: formData.get("confirmed") === "on",
+      transactionHash: text(formData, "transactionHash") || undefined,
     });
     if (outcome.funding.status === "failed") {
       failed = outcome.funding.failureReason ?? "The transfer did not go through.";

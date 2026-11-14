@@ -12,6 +12,7 @@ import {
   SimulatedBadge,
   WalletStatusBadge,
 } from "@/components/engagements/badges";
+import { ChainLink } from "@/components/goat/chain-link";
 import { SampleBadge } from "@/components/sellers/badges";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,7 +32,12 @@ import {
 import { formatMoney } from "@/lib/money";
 import { formatUnits, unitsToDecimalString } from "@/lib/units";
 import { getEngagementActivity } from "@/server/engagement-activity";
-import { getEngagementDetail, type EngagementDetail } from "@/server/engagements";
+import {
+  getEngagementDetail,
+  getWalletChainState,
+  type EngagementDetail,
+  type WalletChainState,
+} from "@/server/engagements";
 import { isAppError } from "@/server/errors";
 import { requireWorkspace } from "@/server/page-context";
 import {
@@ -44,6 +50,7 @@ import {
 import {
   AuthorizeEngagementForm,
   CancelEngagementForm,
+  ChainFundingForm,
   FundingForm,
   MandateForm,
   ProvisionWalletForm,
@@ -70,6 +77,18 @@ function NetworkRoles() {
         </div>
       ))}
     </dl>
+  );
+}
+
+/** Marks a wallet or payment that is on GOAT Testnet3 rather than simulated. */
+function NetworkBadge() {
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded-full border border-info/30 bg-info-dim px-2.5 py-0.5 text-xs font-medium whitespace-nowrap text-info"
+      title="A real wallet on GOAT Testnet3. Test assets only: nothing here has monetary value."
+    >
+      GOAT Testnet3
+    </span>
   );
 }
 
@@ -178,20 +197,61 @@ function MandateSummary({ detail }: { detail: EngagementDetail }) {
   );
 }
 
-function WalletSummary({ detail }: { detail: EngagementDetail }) {
+function WalletSummary({ detail, chain }: { detail: EngagementDetail; chain: WalletChainState | null }) {
   const wallet = detail.wallet;
   if (!wallet) return null;
+  const gas = chain ? formatUnits(chain.gasUnits, { code: chain.gasSymbol, decimals: chain.gasDecimals }) : null;
   return (
     <dl className="-my-3 divide-y divide-border">
-      <Row label="Balance">
+      <Row label={wallet.isSimulated ? "Balance" : "Funded and unspent"}>
         <span className="figure text-base">{formatUnits(wallet.balanceUnits, wallet.asset)}</span>
+        {wallet.isSimulated ? null : (
+          <span className="mt-0.5 block text-xs text-muted-foreground">
+            What the platform has confirmed in and paid out. This, not the chain balance, is what the
+            agent may spend.
+          </span>
+        )}
       </Row>
+      {wallet.isSimulated ? null : (
+        <>
+          <Row label="On the chain now">
+            {chain ? (
+              <>
+                <span className="figure">{formatUnits(chain.tokenUnits, wallet.asset)}</span>
+                {chain.tokenUnits !== wallet.balanceUnits ? (
+                  <span className="mt-0.5 block text-xs text-warn">
+                    Differs from the confirmed figure above. Tokens sent without a funding
+                    authorization are not spendable until one is recorded.
+                  </span>
+                ) : null}
+              </>
+            ) : (
+              <span className="text-muted-foreground">GOAT Testnet3 could not be read just now.</span>
+            )}
+          </Row>
+          <Row label="For network fees">
+            {chain ? (
+              <>
+                <span className="figure">{gas}</span>
+                {chain.gasUnits === 0n ? (
+                  <span className="mt-0.5 block text-xs text-warn">
+                    This wallet pays its own network fees and has nothing to pay them with. Send it
+                    a little test {chain.gasSymbol} before the agent runs, or payments will not go out.
+                  </span>
+                ) : null}
+              </>
+            ) : (
+              <span className="text-muted-foreground">Unknown</span>
+            )}
+          </Row>
+        </>
+      )}
       <Row label="Status">
         <WalletStatusBadge status={wallet.status} />
       </Row>
       <Row label="Belongs to">This engagement only. It cannot be used by any other.</Row>
-      <Row label="Reference">
-        <span className="figure text-xs text-ink-soft">{wallet.providerRef}</span>
+      <Row label={wallet.isSimulated ? "Reference" : "Address"}>
+        <ChainLink value={wallet.providerRef} className="text-xs text-ink-soft" />
       </Row>
     </dl>
   );
@@ -208,6 +268,7 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
 
   const activity = await getEngagementActivity(actor, id);
   const { engagement, seller, project, mandate, wallet, can } = detail;
+  const chain = wallet && !wallet.isSimulated ? await getWalletChainState(actor, id) : null;
   const state = engagement.state;
   const ended = isTerminal(state);
 
@@ -304,8 +365,11 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
       {seller.isSample ? (
         <p className="rounded-xl border border-warn/30 bg-warn-dim px-5 py-3 text-sm text-ink-soft">
           <span className="font-medium text-foreground">Sample seller.</span> This engagement is a
-          demonstration: the seller is run by 905 Finance and no real funds exist or move. The
-          tests it buys are executed for real by the platform's testing worker.
+          demonstration: the seller is run by 905 Finance.{" "}
+          {engagement.settlement === "simulated"
+            ? "No real funds exist or move."
+            : "Its wallet and payments are real ones on GOAT Testnet3, in test assets with no monetary value."}{" "}
+          The tests it buys are executed for real by the platform's testing worker.
         </p>
       ) : null}
 
@@ -413,9 +477,9 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
         <Panel
           title="Engagement wallet"
           description="Dedicated to this engagement. Separate from your master account and from every other engagement."
-          action={wallet.isSimulated ? <SimulatedBadge /> : null}
+          action={wallet.isSimulated ? <SimulatedBadge /> : <NetworkBadge />}
         >
-          <WalletSummary detail={detail} />
+          <WalletSummary detail={detail} chain={chain} />
         </Panel>
       ) : null}
 
@@ -430,6 +494,19 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
         >
           {!can.fund ? (
             <OwnerOnly what="authorize funding" />
+          ) : !wallet.isSimulated ? (
+            <ChainFundingForm
+              key={detail.fundings.length}
+              engagementId={engagement.id}
+              idempotencyKey={randomUUID()}
+              assetCode={wallet.asset.code}
+              walletAddress={wallet.providerRef}
+              fundingWallet={detail.fundingWallet}
+              suggestedAmount={
+                mandate ? unitsToDecimalString(mandate.totalAuthorizedUnits, mandate.asset.decimals) : ""
+              }
+              submitLabel={state === "AWAITING_FUNDING" ? "Confirm funding" : "Confirm top-up"}
+            />
           ) : master <= 0n ? (
             <div className="space-y-3">
               <p className="text-sm leading-relaxed text-ink-soft">
@@ -474,6 +551,9 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
                     {dateTimeFormat.format(funding.authorizedAt)}
                     {funding.failureReason ? ` · ${funding.failureReason}` : ""}
                   </p>
+                  {funding.transactionHash ? (
+                    <ChainLink value={funding.transactionHash} short className="text-xs text-muted-foreground" />
+                  ) : null}
                 </div>
                 <div className="flex items-center gap-2">
                   {funding.isSimulated ? <SimulatedBadge /> : null}

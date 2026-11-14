@@ -109,7 +109,15 @@ export async function closeEngagement(
     .where(eq(engagementWallets.engagementId, engagement.id))
     .for("update");
   if (wallet) {
-    await getWalletProvider(wallet.rail).suspendPurchasing({ providerRef: wallet.providerRef });
+    // Ending an engagement must always succeed. The platform's own record is
+    // what stops the wallet being used; telling the provider is a courtesy on top.
+    try {
+      await getWalletProvider(wallet.rail, wallet.isSimulated ? "simulated" : "goat_testnet3").suspendPurchasing({
+        providerRef: wallet.providerRef,
+      });
+    } catch (error) {
+      console.error("The wallet provider could not be told to suspend a wallet", error);
+    }
     await tx
       .update(engagementWallets)
       .set({ status: wallet.balanceUnits > 0n ? "closing" : "closed" })

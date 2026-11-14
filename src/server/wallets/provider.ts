@@ -29,7 +29,7 @@ export interface WalletProvider {
   provisionEngagementWallet(input: {
     engagementId: string;
     organizationId: string;
-  }): Promise<{ providerRef: string }>;
+  }): Promise<{ providerRef: string; custodyRef?: string }>;
 
   /**
    * The balance the rail itself reports, or null when the rail keeps no

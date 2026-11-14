@@ -348,7 +348,7 @@ async function startRun(
         `${seller.displayName}'s agent is not connected yet. In this version the purchasing agent can only run against the sample sellers.`,
       );
     }
-    if (getWalletProvider(engagement.rail).asset.code !== asset.code) {
+    if (getWalletProvider(engagement.rail, engagement.settlement).asset.code !== asset.code) {
       throw conflict("The engagement's asset does not match its rail.");
     }
 

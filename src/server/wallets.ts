@@ -46,6 +46,8 @@ export async function ensureMasterAccount(
         and(
           eq(masterWalletAccounts.organizationId, organizationId),
           eq(masterWalletAccounts.rail, rail),
+          // The simulated account only. A real funding wallet is the buyer's own and is a separate record.
+          eq(masterWalletAccounts.isSimulated, true),
         ),
       )
       .for("update");
@@ -68,6 +70,60 @@ export async function ensureMasterAccount(
     .onConflictDoNothing();
   const [created] = await find();
   if (!created) throw new Error("Master account could not be created.");
+  return created;
+}
+
+/**
+ * The organization's real funding wallet on GOAT: the buyer's own address,
+ * recorded the first time it funds an engagement. The platform holds no key
+ * to it. Later funding must come from the same address, so that an
+ * engagement's money always has one known origin to be returned to.
+ */
+export async function ensureFundingWallet(
+  tx: DbOrTx,
+  organizationId: string,
+  fromAddress: string,
+  asset: AssetInfo,
+): Promise<MasterWalletAccount> {
+  const [existing] = await tx
+    .select()
+    .from(masterWalletAccounts)
+    .where(
+      and(
+        eq(masterWalletAccounts.organizationId, organizationId),
+        eq(masterWalletAccounts.rail, SETTLEMENT_RAIL),
+        eq(masterWalletAccounts.isSimulated, false),
+      ),
+    )
+    .for("update");
+  if (existing) {
+    if (existing.providerRef.toLowerCase() !== fromAddress.toLowerCase()) {
+      throw invalid("Check the highlighted fields.", {
+        transactionHash: [
+          `That transfer came from ${fromAddress}, not from your organization's funding wallet ${existing.providerRef}.`,
+        ],
+      });
+    }
+    return existing;
+  }
+  const [created] = await tx
+    .insert(masterWalletAccounts)
+    .values({
+      organizationId,
+      rail: SETTLEMENT_RAIL,
+      asset: asset.code,
+      assetDecimals: asset.decimals,
+      provider: "buyer-wallet",
+      providerRef: fromAddress,
+      isSimulated: false,
+    })
+    .onConflictDoNothing()
+    .returning();
+  if (!created) {
+    throw invalid("Check the highlighted fields.", {
+      transactionHash: ["That wallet is already the funding wallet of another organization."],
+    });
+  }
   return created;
 }
 
@@ -142,6 +198,8 @@ export type RailOverview = {
   rail: PaymentRail;
   /** True for a rail nothing new is created on; it is shown for its history only. */
   retired: boolean;
+  /** For the buyer's own wallet on GOAT: its address. Null for an account the platform keeps. */
+  fundingWallet: string | null;
   asset: AssetInfo;
   simulated: boolean;
   /** Null until the organization's account on this rail has been set up. */
@@ -237,20 +295,37 @@ export async function getWalletOverview(
   );
   const rails: RailOverview[] = shown.map((rail) => {
     const provider = getWalletProvider(rail);
-    const master = masters.find((m) => m.rail === rail);
+    const master = masters.find((m) => m.rail === rail && m.isSimulated);
     return {
       rail,
       retired: rail !== SETTLEMENT_RAIL,
+      fundingWallet: null,
       asset: master ? { code: master.asset, decimals: master.assetDecimals } : provider.asset,
       simulated: master ? master.isSimulated : provider.simulated,
       masterAccountId: master?.id ?? null,
       unallocatedUnits: master?.balanceUnits ?? 0n,
       // Summed per rail only: balances on different rails are never added together.
       allocatedUnits: wallets
-        .filter((w) => w.rail === rail)
+        .filter((w) => w.rail === rail && w.isSimulated)
         .reduce((sum, w) => sum + w.balanceUnits, 0n),
     };
   });
+  // The buyer's own wallet on GOAT, once it has funded an engagement. The
+  // platform keeps no balance for it: only what it has put into engagements.
+  for (const master of masters.filter((m) => !m.isSimulated)) {
+    rails.push({
+      rail: master.rail,
+      retired: false,
+      fundingWallet: master.providerRef,
+      asset: { code: master.asset, decimals: master.assetDecimals },
+      simulated: false,
+      masterAccountId: master.id,
+      unallocatedUnits: 0n,
+      allocatedUnits: wallets
+        .filter((w) => w.rail === master.rail && !w.isSimulated)
+        .reduce((sum, w) => sum + w.balanceUnits, 0n),
+    });
+  }
 
   const ledgerRows = await db
     .select({

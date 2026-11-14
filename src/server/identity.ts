@@ -1,6 +1,6 @@
 import "server-only";
 import { and, eq, ne } from "drizzle-orm";
-import { getDb, schema } from "@/db/client";
+import { getDb, schema, type DbOrTx } from "@/db/client";
 import type { SellerIdentity, SellerProfile } from "@/db/schema";
 import { recordAudit } from "./audit";
 import { assertAuthenticated, requirePermission, type Actor } from "./authz";
@@ -176,8 +176,10 @@ export async function linkSellerIdentity(
 }
 
 /** Read the chain again for a listing's linked agent, and store what it says now. */
-export async function refreshSellerIdentity(sellerProfileId: string): Promise<SellerIdentity | null> {
-  const db = getDb();
+export async function refreshSellerIdentity(
+  sellerProfileId: string,
+  db: DbOrTx = getDb(),
+): Promise<SellerIdentity | null> {
   const [existing] = await db
     .select()
     .from(sellerIdentities)
@@ -296,12 +298,18 @@ export async function findPublicIdentity(sellerProfileId: string): Promise<Publi
 
 /**
  * The wallet a seller may be paid at on GOAT: the one its confirmed identity
- * names, and nothing else. Null when the seller has no confirmed identity.
+ * has set in the registry, and nothing else. Null when the identity is not
+ * confirmed, or when the registry holds no wallet for the agent (which is
+ * also what it reports after the identity changes hands): an owner address
+ * standing in is good enough to show, not to pay.
  */
-export async function verifiedReceivingWallet(sellerProfileId: string): Promise<string | null> {
-  const [row] = await getDb()
+export async function verifiedReceivingWallet(
+  sellerProfileId: string,
+  db: DbOrTx = getDb(),
+): Promise<string | null> {
+  const [row] = await db
     .select()
     .from(sellerIdentities)
     .where(eq(sellerIdentities.sellerProfileId, sellerProfileId));
-  return row?.confirmed ? row.agentWallet : null;
+  return row?.confirmed && row.agentWalletSet ? row.agentWallet : null;
 }
