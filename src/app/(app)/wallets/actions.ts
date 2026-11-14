@@ -9,7 +9,6 @@ export async function addSimulatedFundsAction(_prev: FormState, formData: FormDa
   try {
     const { actor, workspace } = await requireActionWorkspace();
     await depositSimulatedFunds(actor, workspace.organization.id, {
-      rail: text(formData, "rail"),
       amount: text(formData, "amount"),
     });
   } catch (error) {

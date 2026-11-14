@@ -152,12 +152,6 @@ export async function saveMandateDraft(
     if (!seller || seller.status !== "active") {
       throw conflict("This seller's listing is no longer active.");
     }
-    if (!seller.intendedRails.includes(input.rail)) {
-      throw invalid("Check the highlighted fields.", {
-        rail: ["This seller does not accept that payment rail."],
-      });
-    }
-
     const asset = getWalletProvider(input.rail).asset;
     const total = parseUnits(input.totalBudget, asset.decimals);
     const perTransaction = parseUnits(input.perTransactionLimit, asset.decimals);
@@ -722,7 +716,6 @@ export type EngagementDetail = {
     tagline: string;
     isSample: boolean;
     isActive: boolean;
-    intendedRails: string[];
     offerings: Array<{
       id: string;
       name: string;
@@ -861,7 +854,6 @@ export async function getEngagementDetail(
       tagline: seller.tagline,
       isSample: seller.isSample,
       isActive: seller.status === "active",
-      intendedRails: seller.intendedRails,
       offerings: offerings.map((o) => ({
         id: o.id,
         name: o.name,

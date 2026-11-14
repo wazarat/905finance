@@ -94,7 +94,7 @@ async function createSeller(label: string, capabilities: string[]): Promise<Sell
     ...validListing,
     displayName: `${label} agents`,
     capabilities,
-    intendedRails: ["qatom"],
+    intendedRails: ["goat"],
   });
   await saveSellerEndpoint(owner, org, validEndpoint);
   const offering: Record<string, string> = {};
@@ -129,14 +129,14 @@ async function createBuyer(label: string): Promise<Buyer> {
     hasWeb3: true,
   });
   const repository = await createProject(owner, org, validProject);
-  await depositSimulatedFunds(owner, org, { rail: "qatom", amount: "100000" });
+  await depositSimulatedFunds(owner, org, { rail: "goat", amount: "100000" });
   return { owner, org, node: node.id, vault: vault.id, repository: repository.id };
 }
 
 async function engage(buyer: Buyer, seller: Seller, projectId: string): Promise<string> {
   const engagement = await createEngagement(buyer.owner, buyer.org, { sellerSlug: seller.slug, projectId });
   await saveMandateDraft(buyer.owner, engagement.id, {
-    rail: "qatom",
+    rail: "goat",
     totalBudget: "100",
     perTransactionLimit: "25",
     offeringIds: Object.values(seller.offering),
@@ -352,7 +352,7 @@ describe("queueing", () => {
         engagementId: job.engagementId,
         serviceOfferingId: relay.offering.unit_testing,
         offeringName: "Run unit_testing",
-        asset: "USD-TDN",
+        asset: "SIM-USD",
         amountUnits: 1000n,
         recipient: "nowhere",
         idempotencyKey: randomUUID(),
@@ -632,7 +632,7 @@ describe("usage and budget", () => {
     expect(jobs).toHaveLength(3);
     for (const job of jobs) {
       expect(job.chargeUnits).toBe(1000n);
-      expect(job.asset).toEqual({ code: "USD-TDN", decimals: 2 });
+      expect(job.asset).toEqual({ code: "SIM-USD", decimals: 2 });
       expect(job.isSimulatedPayment).toBe(true);
     }
     expect(await getBudgetStatus(db, id)).toMatchObject({ spentUnits: 3000n, remainingUnits: 7000n });
@@ -668,7 +668,7 @@ describe("who can read reports", () => {
     });
     expect(report.result).toMatchObject({ outcome: "failed", testsTotal: 6, testsPassed: 5, testsFailed: 1 });
     expect(report.execution).toMatchObject({ command: "vitest run tests/unit", workerId: "worker-a" });
-    expect(report.paymentReference).toContain("demo-payment:qatom:");
+    expect(report.paymentReference).toContain("demo-payment:goat:");
     expect((await getTestingReport(acmeMember, job.id)).id).toBe(job.id);
 
     for (const outsider of [globex.owner, relay.owner, ledger.owner]) {
@@ -931,7 +931,7 @@ describe("real execution", () => {
     expect(report.execution!.log).not.toContain(".runs");
     expect(report.execution!.exitCode).toBe(1);
     expect(report.chargeUnits).toBe(1000n);
-    expect(report.paymentReference).toContain("demo-payment:qatom:");
+    expect(report.paymentReference).toContain("demo-payment:goat:");
     expect((await purchaseById(report.purchaseId)).status).toBe("delivered");
   });
 

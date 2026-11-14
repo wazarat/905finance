@@ -83,7 +83,6 @@ export async function updateSellerListing(
         tagline: input.tagline,
         description: input.description,
         capabilities: [...new Set(input.capabilities)],
-        intendedRails: [...new Set(input.intendedRails)],
       })
       .where(eq(sellerProfiles.id, profile.id))
       .returning();

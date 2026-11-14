@@ -121,7 +121,7 @@ export const STANDARD_CAPABILITIES: Capability[] = CAPABILITIES.filter((c) => !c
 export const WEB3_CAPABILITIES: Capability[] = CAPABILITIES.filter((c) => c.web3);
 
 // ---------------------------------------------------------------------------
-// Billing units and payment rails (labels only; no rail is live in Milestone 1)
+// Billing units, and the two networks an engagement runs on
 // ---------------------------------------------------------------------------
 
 export const BILLING_UNIT_LABELS = {
@@ -134,25 +134,56 @@ export const BILLING_UNIT_LABELS = {
 } as const;
 
 /**
- * Payment rails. Each rail has its own accounts and its own asset; value on
- * one rail is never counted as, or moved to, another.
+ * Every engagement uses two networks together, each for one job. They are
+ * not alternatives, and neither does the other's work:
  *
- * `simulatedAsset` is the stand-in unit used while a rail is not really
- * connected. Real asset codes, decimals and token contracts are confirmed
- * against each provider when its integration is built.
+ * - Qatom carries the conversation between the buyer's agent and the
+ *   seller's agent. No money moves through it.
+ * - GOAT Network identifies the seller (ERC-8004) and is where every payment
+ *   is made, in a USD asset.
+ */
+export const NETWORK_ROLES = {
+  communication: {
+    name: "Qatom",
+    role: "Agent communication",
+    detail: "Carries requests and results between your agent and the seller's agent. No money moves through it.",
+  },
+  settlement: {
+    name: "GOAT Network",
+    role: "Identity and payment",
+    detail: "Identifies the seller (ERC-8004) and is where every payment is made, in USD.",
+  },
+} as const;
+
+/** The one network payments are made on. Every new engagement settles here. */
+export const SETTLEMENT_RAIL = "goat" as const;
+
+/**
+ * Accounting rails. Each has its own accounts and its own asset; value on
+ * one is never counted as, or moved to, another.
+ *
+ * Only the settlement rail can be chosen. `qatom` remains as a key so that
+ * records made while it was offered as a simulated payment rail stay
+ * readable: nothing new is created on it.
+ *
+ * `simulatedAsset` is the stand-in unit used until the network is really
+ * connected. The real asset code, decimals and token contract are confirmed
+ * against GOAT when that integration is built.
  */
 export const PAYMENT_RAILS = [
   {
-    key: "qatom",
-    label: "Qatom",
-    asset: "USD-TDN",
-    simulatedAsset: { code: "USD-TDN", decimals: 2 },
-  },
-  {
     key: "goat",
     label: "GOAT Network",
-    asset: "GOAT Flow asset",
+    asset: "USD asset on GOAT",
     simulatedAsset: { code: "SIM-USD", decimals: 2 },
+    retired: false,
+  },
+  {
+    key: "qatom",
+    label: "Earlier demo account",
+    asset: "USD-TDN",
+    simulatedAsset: { code: "USD-TDN", decimals: 2 },
+    retired: true,
   },
 ] as const;
 

@@ -7,7 +7,7 @@ import type {
   PaymentRail,
   WalletStatus,
 } from "@/db/schema";
-import { PAYMENT_RAIL_KEYS } from "@/lib/capabilities";
+import { PAYMENT_RAIL_KEYS, SETTLEMENT_RAIL } from "@/lib/capabilities";
 import { formatUnits, parseUnits, type AssetInfo } from "@/lib/units";
 import { recordAudit } from "./audit";
 import { assertAuthenticated, requirePermission, type Actor } from "./authz";
@@ -140,6 +140,8 @@ export async function depositSimulatedFunds(
 
 export type RailOverview = {
   rail: PaymentRail;
+  /** True for a rail nothing new is created on; it is shown for its history only. */
+  retired: boolean;
   asset: AssetInfo;
   simulated: boolean;
   /** Null until the organization's account on this rail has been set up. */
@@ -225,11 +227,20 @@ export async function getWalletOverview(
     createdAt: row.wallet.createdAt,
   }));
 
-  const rails: RailOverview[] = PAYMENT_RAIL_KEYS.map((rail) => {
+  // The settlement network is always shown. A retired rail appears only if
+  // this organization still has an account or a wallet on it.
+  const shown = PAYMENT_RAIL_KEYS.filter(
+    (rail) =>
+      rail === SETTLEMENT_RAIL ||
+      masters.some((m) => m.rail === rail) ||
+      wallets.some((w) => w.rail === rail),
+  );
+  const rails: RailOverview[] = shown.map((rail) => {
     const provider = getWalletProvider(rail);
     const master = masters.find((m) => m.rail === rail);
     return {
       rail,
+      retired: rail !== SETTLEMENT_RAIL,
       asset: master ? { code: master.asset, decimals: master.assetDecimals } : provider.asset,
       simulated: master ? master.isSimulated : provider.simulated,
       masterAccountId: master?.id ?? null,

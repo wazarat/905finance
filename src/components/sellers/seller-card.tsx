@@ -2,7 +2,6 @@ import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import { CapabilityChip, SampleBadge } from "@/components/sellers/badges";
 import { formatMoney } from "@/lib/money";
-import { railLabel } from "@/lib/capabilities";
 import type { PublicSeller } from "@/server/marketplace";
 
 const MAX_CHIPS = 4;
@@ -47,11 +46,6 @@ export function SellerCard({ seller }: { seller: PublicSeller }) {
         </div>
         <div className="flex flex-col items-end gap-1.5">
           {seller.isSample ? <SampleBadge /> : null}
-          {seller.intendedRails.length > 0 ? (
-            <p className="text-xs text-muted-foreground">
-              {seller.intendedRails.map(railLabel).join(" · ")}
-            </p>
-          ) : null}
         </div>
       </div>
     </Link>

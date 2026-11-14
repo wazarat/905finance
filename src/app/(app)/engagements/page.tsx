@@ -6,7 +6,7 @@ import { PageSkeleton } from "@/components/app/page-skeleton";
 import { EngagementStateBadge } from "@/components/engagements/badges";
 import { SampleBadge } from "@/components/sellers/badges";
 import { Button } from "@/components/ui/button";
-import { railLabel } from "@/lib/capabilities";
+import { SETTLEMENT_RAIL, railLabel } from "@/lib/capabilities";
 import { formatUnits } from "@/lib/units";
 import { listEngagements } from "@/server/engagements";
 import { requireWorkspace } from "@/server/page-context";
@@ -79,7 +79,9 @@ async function EngagementsContent() {
                   </div>
                   <p className="truncate text-sm text-muted-foreground">
                     {engagement.projectName}
-                    {engagement.rail ? ` · ${railLabel(engagement.rail)}` : ""}
+                    {engagement.rail && engagement.rail !== SETTLEMENT_RAIL
+                      ? ` · ${railLabel(engagement.rail)}`
+                      : ""}
                     {" · started "}
                     {dateFormat.format(engagement.createdAt)}
                   </p>

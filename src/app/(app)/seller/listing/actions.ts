@@ -31,7 +31,6 @@ export async function saveListingAction(_prev: FormState, formData: FormData): P
       tagline: text(formData, "tagline"),
       description: text(formData, "description"),
       capabilities: textList(formData, "capabilities"),
-      intendedRails: textList(formData, "intendedRails"),
     });
   } catch (error) {
     return failureState(error, formValues(formData));

@@ -105,7 +105,6 @@ async function SellerListingContent() {
             tagline: profile.tagline,
             description: profile.description,
             capabilities: profile.capabilities,
-            intendedRails: profile.intendedRails,
           }}
         />
       </Panel>

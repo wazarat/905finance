@@ -54,7 +54,7 @@ let beta: Seller;
 
 const MISSING_ID = "00000000-0000-4000-8000-000000000000";
 
-async function createSeller(label: string, rails: string[] = ["qatom", "goat"]): Promise<Seller> {
+async function createSeller(label: string, rails: string[] = ["goat", "qatom"]): Promise<Seller> {
   const owner = await createUser(db, `${label}-owner`);
   const ws = await completeOnboarding(owner, {
     displayName: `${label} owner`,
@@ -95,7 +95,7 @@ async function createBuyer(label: string): Promise<Buyer> {
 
 function mandate(seller: Seller, overrides: Record<string, unknown> = {}) {
   return {
-    rail: "qatom",
+    rail: "goat",
     totalBudget: "100",
     perTransactionLimit: "25",
     offeringIds: seller.offeringIds,
@@ -142,7 +142,7 @@ async function walletOf(id: string) {
   return row;
 }
 
-async function masterBalance(org: string, rail: "qatom" | "goat") {
+async function masterBalance(org: string, rail: "goat" | "qatom") {
   const [row] = await db
     .select()
     .from(schema.masterWalletAccounts)
@@ -158,14 +158,14 @@ async function masterBalance(org: string, rail: "qatom" | "goat") {
 beforeAll(async () => {
   ({ db, close } = await useTestDatabase());
   alpha = await createSeller("alpha");
-  beta = await createSeller("beta", ["goat"]);
+  beta = await createSeller("beta", ["qatom"]);
   acme = await createBuyer("acme");
   globex = await createBuyer("globex");
   acmeAdmin = await createUser(db, "acme-admin");
   acmeMember = await createUser(db, "acme-member");
   await addMember(db, acme.org, acmeAdmin.userId, "admin");
   await addMember(db, acme.org, acmeMember.userId, "member");
-  await depositSimulatedFunds(acme.owner, acme.org, { rail: "qatom", amount: "1000" });
+  await depositSimulatedFunds(acme.owner, acme.org, { rail: "goat", amount: "1000" });
 });
 afterAll(async () => close());
 
@@ -235,25 +235,36 @@ describe("the spending mandate", () => {
     const id = await drafted(acme, alpha);
     const detail = await getEngagementDetail(acme.owner, id);
     expect(detail.engagement.state).toBe("SELLER_SELECTED");
-    expect(detail.engagement.rail).toBe("qatom");
+    expect(detail.engagement.rail).toBe("goat");
     expect(detail.mandate).toMatchObject({
       status: "draft",
       totalAuthorizedUnits: 10000n,
       perTransactionLimitUnits: 2500n,
-      asset: { code: "USD-TDN", decimals: 2 },
+      asset: { code: "SIM-USD", decimals: 2 },
     });
     expect(detail.mandate?.permittedOfferingIds.sort()).toEqual([...alpha.offeringIds].sort());
     expect(detail.wallet).toBeNull();
     expect(detail.agent).toBeNull();
   });
 
-  it("can be revised, including its rail, until it is authorized", async () => {
+  it("can be revised until it is authorized, and always settles on GOAT", async () => {
     const id = await drafted(acme, alpha);
-    await saveMandateDraft(acme.owner, id, mandate(alpha, { rail: "goat", totalBudget: "250.50" }));
+    // The network is not part of the form: leaving it out changes nothing.
+    const { rail: _unused, ...withoutRail } = mandate(alpha, { totalBudget: "250.50" });
+    await saveMandateDraft(acme.owner, id, withoutRail);
     const detail = await getEngagementDetail(acme.owner, id);
     expect(detail.engagement.rail).toBe("goat");
     expect(detail.mandate?.totalAuthorizedUnits).toBe(25050n);
     expect(detail.mandate?.asset.code).toBe("SIM-USD");
+  });
+
+  it("cannot be pointed at any other payment network", async () => {
+    const id = await drafted(acme, alpha);
+    for (const rail of ["qatom", "paypal", ""]) {
+      const error = await saveMandateDraft(acme.owner, id, mandate(alpha, { rail })).catch((e) => e);
+      expect(error.fieldErrors.rail[0], rail).toContain("GOAT Network");
+    }
+    expect((await getEngagementDetail(acme.owner, id)).engagement.rail).toBe("goat");
   });
 
   it("rejects limits and services that do not make sense", async () => {
@@ -262,11 +273,8 @@ describe("the spending mandate", () => {
       projectId: acme.projectId,
     });
     const attempt = (overrides: Record<string, unknown>) =>
-      saveMandateDraft(acme.owner, engagement.id, mandate(beta, { rail: "goat", ...overrides })).catch(
-        (e) => e,
-      );
+      saveMandateDraft(acme.owner, engagement.id, mandate(beta, overrides)).catch((e) => e);
 
-    expect((await attempt({ rail: "qatom" })).fieldErrors.rail).toBeDefined();
     expect((await attempt({ totalBudget: "0" })).fieldErrors.totalBudget).toBeDefined();
     expect((await attempt({ totalBudget: "12.345" })).fieldErrors.totalBudget).toBeDefined();
     expect((await attempt({ totalBudget: "-5" })).fieldErrors.totalBudget).toBeDefined();
@@ -313,7 +321,7 @@ describe("authorizing the engagement", () => {
   });
 
   it("locks the mandate, creates an inactive agent, and moves no funds", async () => {
-    const before = await masterBalance(acme.org, "qatom");
+    const before = await masterBalance(acme.org, "goat");
     const id = await drafted(acme, alpha);
     const authorized = await authorizeEngagement(acme.owner, id, { confirmed: true });
 
@@ -325,7 +333,7 @@ describe("authorizing the engagement", () => {
     expect(detail.mandate?.status).toBe("authorized");
     expect(detail.agent?.status).toBe("inactive");
     expect(detail.wallet).toBeNull();
-    expect(await masterBalance(acme.org, "qatom")).toBe(before);
+    expect(await masterBalance(acme.org, "goat")).toBe(before);
 
     await expect(saveMandateDraft(acme.owner, id, mandate(alpha, { totalBudget: "9999" }))).rejects.toMatchObject(
       { code: "conflict" },
@@ -339,7 +347,7 @@ describe("authorizing the engagement", () => {
 
 describe("provisioning the wallet", () => {
   it("gives the engagement its own empty wallet and waits for funding", async () => {
-    const before = await masterBalance(acme.org, "qatom");
+    const before = await masterBalance(acme.org, "goat");
     const id = await drafted(acme, alpha);
     await expect(provisionEngagementWallet(acme.owner, id)).rejects.toMatchObject({ code: "conflict" });
 
@@ -360,10 +368,10 @@ describe("provisioning the wallet", () => {
       status: "awaiting_funding",
       balanceUnits: 0n,
       isSimulated: true,
-      asset: { code: "USD-TDN", decimals: 2 },
+      asset: { code: "SIM-USD", decimals: 2 },
     });
     expect(detail.agent?.status).toBe("inactive");
-    expect(await masterBalance(acme.org, "qatom")).toBe(before);
+    expect(await masterBalance(acme.org, "goat")).toBe(before);
     await expect(provisionEngagementWallet(acme.owner, id)).rejects.toMatchObject({ code: "conflict" });
   });
 });
@@ -386,13 +394,13 @@ describe("authorizing funding", () => {
 
   it("moves the exact amount, records it, and activates the engagement", async () => {
     const id = await awaitingFunding(acme, alpha);
-    const before = await masterBalance(acme.org, "qatom");
+    const before = await masterBalance(acme.org, "goat");
     const outcome = await authorizeFunding(acme.owner, id, funding("60.25"));
 
     expect(outcome.replayed).toBe(false);
     expect(outcome.funding).toMatchObject({ status: "executed", amountUnits: 6025n, isSimulated: true });
     expect(outcome.engagement.state).toBe("ACTIVE");
-    expect(await masterBalance(acme.org, "qatom")).toBe(before - 6025n);
+    expect(await masterBalance(acme.org, "goat")).toBe(before - 6025n);
 
     const detail = await getEngagementDetail(acme.owner, id);
     expect(detail.wallet).toMatchObject({ status: "active", balanceUnits: 6025n });
@@ -417,7 +425,7 @@ describe("authorizing funding", () => {
     expect(await state(id)).toBe("AWAITING_FUNDING");
 
     // Funding above the budget is allowed and leaves the budget unchanged.
-    await depositSimulatedFunds(poor.owner, poor.org, { rail: "qatom", amount: "900" });
+    await depositSimulatedFunds(poor.owner, poor.org, { rail: "goat", amount: "900" });
     await authorizeFunding(poor.owner, id, funding("900"));
     const detail = await getEngagementDetail(poor.owner, id);
     expect(detail.wallet?.balanceUnits).toBe(90000n);
@@ -426,10 +434,10 @@ describe("authorizing funding", () => {
 
   it("refuses more than the master account holds", async () => {
     const id = await awaitingFunding(acme, alpha);
-    const before = await masterBalance(acme.org, "qatom");
+    const before = await masterBalance(acme.org, "goat");
     const error = await authorizeFunding(acme.owner, id, funding("999999")).catch((e) => e);
     expect(error.fieldErrors.amount).toBeDefined();
-    expect(await masterBalance(acme.org, "qatom")).toBe(before);
+    expect(await masterBalance(acme.org, "goat")).toBe(before);
     expect((await walletOf(id)).balanceUnits).toBe(0n);
     for (const bad of ["0", "-1", "abc", "1.234"]) {
       await expect(authorizeFunding(acme.owner, id, funding(bad))).rejects.toMatchObject({
@@ -440,7 +448,7 @@ describe("authorizing funding", () => {
 
   it("funds once when the same authorization is submitted twice", async () => {
     const id = await awaitingFunding(acme, alpha);
-    const before = await masterBalance(acme.org, "qatom");
+    const before = await masterBalance(acme.org, "goat");
     const key = randomUUID();
     const first = await authorizeFunding(acme.owner, id, funding("40", key));
     const second = await authorizeFunding(acme.owner, id, funding("40", key));
@@ -455,7 +463,7 @@ describe("authorizing funding", () => {
       expect(repeat.funding.id).toBe(first.funding.id);
     }
     expect((await walletOf(id)).balanceUnits).toBe(4000n);
-    expect(await masterBalance(acme.org, "qatom")).toBe(before - 4000n);
+    expect(await masterBalance(acme.org, "goat")).toBe(before - 4000n);
   });
 
   it("cannot reuse one engagement's authorization key on another", async () => {
@@ -471,7 +479,7 @@ describe("authorizing funding", () => {
 
   it("cannot overdraw the master account with simultaneous authorizations", async () => {
     const buyer = await createBuyer("racer");
-    await depositSimulatedFunds(buyer.owner, buyer.org, { rail: "qatom", amount: "100" });
+    await depositSimulatedFunds(buyer.owner, buyer.org, { rail: "goat", amount: "100" });
     const a = await awaitingFunding(buyer, alpha);
     const b = await awaitingFunding(buyer, alpha);
 
@@ -481,7 +489,7 @@ describe("authorizing funding", () => {
     ]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(results.filter((r) => r.status === "rejected")).toHaveLength(1);
-    expect(await masterBalance(buyer.org, "qatom")).toBe(2000n);
+    expect(await masterBalance(buyer.org, "goat")).toBe(2000n);
     const total = (await walletOf(a)).balanceUnits + (await walletOf(b)).balanceUnits;
     expect(total).toBe(8000n);
   });
@@ -511,7 +519,7 @@ describe("authorizing funding", () => {
   it("is refused when the seller's listing is no longer active", async () => {
     const gone = await createSeller("gone");
     const id = await awaitingFunding(acme, gone);
-    const before = await masterBalance(acme.org, "qatom");
+    const before = await masterBalance(acme.org, "goat");
     await db
       .update(schema.sellerProfiles)
       .set({ status: "suspended" })
@@ -519,7 +527,7 @@ describe("authorizing funding", () => {
     await expect(authorizeFunding(acme.owner, id, funding("10"))).rejects.toMatchObject({
       code: "conflict",
     });
-    expect(await masterBalance(acme.org, "qatom")).toBe(before);
+    expect(await masterBalance(acme.org, "goat")).toBe(before);
     expect(await state(id)).toBe("AWAITING_FUNDING");
   });
 });
@@ -556,11 +564,11 @@ describe("wallet isolation", () => {
       db.insert(schema.engagementWallets).values({
         engagementId: first,
         organizationId: acme.org,
-        rail: "qatom",
-        asset: "USD-TDN",
+        rail: "goat",
+        asset: "SIM-USD",
         assetDecimals: 2,
         provider: "simulated",
-        providerRef: "sim-wallet:qatom:duplicate",
+        providerRef: "sim-wallet:goat:duplicate",
       }),
     ).rejects.toThrow();
     // Handing a wallet to another engagement.
@@ -577,8 +585,8 @@ describe("wallet isolation", () => {
       db.insert(schema.engagementWallets).values({
         engagementId: third,
         organizationId: acme.org,
-        rail: "qatom",
-        asset: "USD-TDN",
+        rail: "goat",
+        asset: "SIM-USD",
         assetDecimals: 2,
         provider: wallet.provider,
         providerRef: wallet.providerRef,
@@ -601,8 +609,8 @@ describe("wallet isolation", () => {
         engagementId: second,
         engagementWalletId: walletOfFirst.id,
         masterWalletAccountId: master.id,
-        rail: "qatom",
-        asset: "USD-TDN",
+        rail: "goat",
+        asset: "SIM-USD",
         amountUnits: 100n,
         idempotencyKey: randomUUID(),
         authorizedBy: acme.owner.userId,
@@ -626,54 +634,81 @@ describe("wallet isolation", () => {
   });
 });
 
-describe("rail separation", () => {
-  it("never funds an engagement on one rail from the other rail's account", async () => {
-    const buyer = await createBuyer("two-rails");
-    await depositSimulatedFunds(buyer.owner, buyer.org, { rail: "qatom", amount: "500" });
-    const goatEngagement = await awaitingFunding(buyer, beta, { rail: "goat" });
+/**
+ * Qatom was once offered as a simulated payment rail. Accounts from that time
+ * are kept for their history, and must stay sealed off from everything new.
+ */
+async function legacyMasterAccount(org: string, balanceUnits: bigint) {
+  const [account] = await db
+    .insert(schema.masterWalletAccounts)
+    .values({
+      organizationId: org,
+      rail: "qatom",
+      asset: "USD-TDN",
+      assetDecimals: 2,
+      provider: "simulated",
+      providerRef: `sim-master:qatom:${randomUUID()}`,
+      balanceUnits,
+    })
+    .returning();
+  return account;
+}
 
-    const error = await authorizeFunding(buyer.owner, goatEngagement, funding("10")).catch((e) => e);
+describe("rail separation", () => {
+  it("never funds an engagement from an account on another rail", async () => {
+    const buyer = await createBuyer("two-rails");
+    await legacyMasterAccount(buyer.org, 50000n);
+    const engagement = await awaitingFunding(buyer, beta);
+
+    const error = await authorizeFunding(buyer.owner, engagement, funding("10")).catch((e) => e);
     expect(error.fieldErrors.amount[0]).toContain("0.00 SIM-USD");
     expect(await masterBalance(buyer.org, "qatom")).toBe(50000n);
-    expect((await walletOf(goatEngagement)).balanceUnits).toBe(0n);
+    expect((await walletOf(engagement)).balanceUnits).toBe(0n);
 
-    await depositSimulatedFunds(buyer.owner, buyer.org, { rail: "goat", amount: "40" });
-    await authorizeFunding(buyer.owner, goatEngagement, funding("40"));
+    await depositSimulatedFunds(buyer.owner, buyer.org, { amount: "40" });
+    await authorizeFunding(buyer.owner, engagement, funding("40"));
     expect(await masterBalance(buyer.org, "qatom")).toBe(50000n);
     expect(await masterBalance(buyer.org, "goat")).toBe(0n);
-    expect((await walletOf(goatEngagement)).rail).toBe("goat");
+    expect((await walletOf(engagement)).rail).toBe("goat");
 
     const overview = await getWalletOverview(buyer.owner, buyer.org);
-    const qatom = overview.rails.find((r) => r.rail === "qatom")!;
+    const legacy = overview.rails.find((r) => r.rail === "qatom")!;
     const goat = overview.rails.find((r) => r.rail === "goat")!;
-    expect(qatom).toMatchObject({ unallocatedUnits: 50000n, allocatedUnits: 0n });
-    expect(goat).toMatchObject({ unallocatedUnits: 0n, allocatedUnits: 4000n });
+    expect(legacy).toMatchObject({ retired: true, unallocatedUnits: 50000n, allocatedUnits: 0n });
+    expect(goat).toMatchObject({ retired: false, unallocatedUnits: 0n, allocatedUnits: 4000n });
+  });
+
+  it("creates nothing new on the retired rail", async () => {
+    const buyer = await createBuyer("retired-rail");
+    await expect(
+      depositSimulatedFunds(buyer.owner, buyer.org, { rail: "qatom", amount: "500" }),
+    ).rejects.toMatchObject({ code: "invalid" });
+    expect(
+      await db
+        .select()
+        .from(schema.masterWalletAccounts)
+        .where(eq(schema.masterWalletAccounts.organizationId, buyer.org)),
+    ).toEqual([]);
+    // With no history on it, the retired rail is not shown at all.
+    const overview = await getWalletOverview(buyer.owner, buyer.org);
+    expect(overview.rails.map((r) => r.rail)).toEqual(["goat"]);
   });
 
   it("is enforced by the database: wallet, master account and funding share one rail", async () => {
     const buyer = await createBuyer("rail-db");
-    await depositSimulatedFunds(buyer.owner, buyer.org, { rail: "qatom", amount: "50" });
-    const goatEngagement = await awaitingFunding(buyer, beta, { rail: "goat" });
-    const goatWallet = await walletOf(goatEngagement);
-    const [qatomMaster] = await db
-      .select()
-      .from(schema.masterWalletAccounts)
-      .where(
-        and(
-          eq(schema.masterWalletAccounts.organizationId, buyer.org),
-          eq(schema.masterWalletAccounts.rail, "qatom"),
-        ),
-      );
+    const legacyMaster = await legacyMasterAccount(buyer.org, 5000n);
+    const engagement = await awaitingFunding(buyer, beta);
+    const wallet = await walletOf(engagement);
 
-    // Qatom master account -> GOAT wallet, labelled either way.
-    for (const rail of ["qatom", "goat"] as const) {
+    // An account on one rail funding a wallet on the other, labelled either way.
+    for (const rail of ["goat", "qatom"] as const) {
       await expect(
         db.insert(schema.fundingAuthorizations).values({
-          engagementId: goatEngagement,
-          engagementWalletId: goatWallet.id,
-          masterWalletAccountId: qatomMaster.id,
+          engagementId: engagement,
+          engagementWalletId: wallet.id,
+          masterWalletAccountId: legacyMaster.id,
           rail,
-          asset: "USD-TDN",
+          asset: "SIM-USD",
           amountUnits: 100n,
           idempotencyKey: randomUUID(),
           authorizedBy: buyer.owner.userId,
@@ -681,17 +716,17 @@ describe("rail separation", () => {
       ).rejects.toThrow();
     }
     // A wallet on a different rail from its engagement.
-    const qatomEngagement = await drafted(buyer, alpha);
-    await authorizeEngagement(buyer.owner, qatomEngagement, { confirmed: true });
+    const authorized = await drafted(buyer, alpha);
+    await authorizeEngagement(buyer.owner, authorized, { confirmed: true });
     await expect(
       db.insert(schema.engagementWallets).values({
-        engagementId: qatomEngagement,
+        engagementId: authorized,
         organizationId: buyer.org,
-        rail: "goat",
-        asset: "SIM-USD",
+        rail: "qatom",
+        asset: "USD-TDN",
         assetDecimals: 2,
         provider: "simulated",
-        providerRef: "sim-wallet:goat:wrong-rail",
+        providerRef: "sim-wallet:qatom:wrong-rail",
       }),
     ).rejects.toThrow();
   });
@@ -717,7 +752,7 @@ describe("what cannot be changed", () => {
     const id = await drafted(acme, alpha);
     await authorizeEngagement(acme.owner, id, { confirmed: true });
     await expect(
-      db.update(schema.engagements).set({ rail: "goat" }).where(eq(schema.engagements.id, id)),
+      db.update(schema.engagements).set({ rail: "qatom" }).where(eq(schema.engagements.id, id)),
     ).rejects.toThrow();
   });
 
@@ -850,7 +885,7 @@ describe("ending an engagement", () => {
   it("is the owner's call, is final, and leaves the funds where they are", async () => {
     const id = await awaitingFunding(acme, alpha);
     await authorizeFunding(acme.owner, id, funding("45"));
-    const masterBefore = await masterBalance(acme.org, "qatom");
+    const masterBefore = await masterBalance(acme.org, "goat");
 
     await expect(cancelEngagement(acmeAdmin, id)).rejects.toMatchObject({ code: "forbidden" });
     const cancelled = await cancelEngagement(acme.owner, id);
@@ -862,7 +897,7 @@ describe("ending an engagement", () => {
     expect(detail.agent?.status).toBe("revoked");
     // Unused funds are not moved anywhere without a person's authorization.
     expect(detail.wallet).toMatchObject({ status: "closing", balanceUnits: 4500n });
-    expect(await masterBalance(acme.org, "qatom")).toBe(masterBefore);
+    expect(await masterBalance(acme.org, "goat")).toBe(masterBefore);
 
     await expect(authorizeFunding(acme.owner, id, funding("5"))).rejects.toMatchObject({
       code: "conflict",
@@ -932,7 +967,7 @@ describe("when the wallet provider fails", () => {
   };
 
   it("marks the engagement failed if the wallet cannot be provisioned", async () => {
-    const id = await drafted(acme, beta, { rail: "goat" });
+    const id = await drafted(acme, beta);
     await authorizeEngagement(acme.owner, id, { confirmed: true });
     setWalletProvider(
       "goat",
@@ -950,7 +985,7 @@ describe("when the wallet provider fails", () => {
 
   it("records a failed funding and moves nothing", async () => {
     await depositSimulatedFunds(acme.owner, acme.org, { rail: "goat", amount: "100" });
-    const id = await awaitingFunding(acme, beta, { rail: "goat" });
+    const id = await awaitingFunding(acme, beta);
     const before = await masterBalance(acme.org, "goat");
     setWalletProvider(
       "goat",
@@ -977,17 +1012,17 @@ describe("when the wallet provider fails", () => {
 describe("simulated master funds", () => {
   it("can only be added by the owner of a buying organization", async () => {
     await expect(
-      depositSimulatedFunds(acmeAdmin, acme.org, { rail: "qatom", amount: "10" }),
+      depositSimulatedFunds(acmeAdmin, acme.org, { rail: "goat", amount: "10" }),
     ).rejects.toMatchObject({ code: "forbidden" });
     await expect(
-      depositSimulatedFunds(globex.owner, acme.org, { rail: "qatom", amount: "10" }),
+      depositSimulatedFunds(globex.owner, acme.org, { rail: "goat", amount: "10" }),
     ).rejects.toMatchObject({ code: "forbidden" });
     await expect(
-      depositSimulatedFunds(alpha.owner, alpha.org, { rail: "qatom", amount: "10" }),
+      depositSimulatedFunds(alpha.owner, alpha.org, { rail: "goat", amount: "10" }),
     ).rejects.toMatchObject({ code: "forbidden" });
     for (const amount of ["0", "-5", "abc", "1.234", "99999999999"]) {
       await expect(
-        depositSimulatedFunds(acme.owner, acme.org, { rail: "qatom", amount }),
+        depositSimulatedFunds(acme.owner, acme.org, { rail: "goat", amount }),
       ).rejects.toMatchObject({ code: "invalid" });
     }
     await expect(
@@ -997,7 +1032,7 @@ describe("simulated master funds", () => {
 
   it("is recorded in the ledger and flagged as simulated", async () => {
     const buyer = await createBuyer("depositor");
-    const account = await depositSimulatedFunds(buyer.owner, buyer.org, { rail: "goat", amount: "75.5" });
+    const account = await depositSimulatedFunds(buyer.owner, buyer.org, { amount: "75.5" });
     expect(account).toMatchObject({ balanceUnits: 7550n, isSimulated: true, rail: "goat" });
     const overview = await getWalletOverview(buyer.owner, buyer.org);
     expect(overview.ledger[0]).toMatchObject({
@@ -1006,10 +1041,9 @@ describe("simulated master funds", () => {
       deltaUnits: 7550n,
       balanceAfterUnits: 7550n,
     });
-    expect(overview.rails.find((r) => r.rail === "qatom")).toMatchObject({
-      masterAccountId: null,
-      unallocatedUnits: 0n,
-    });
+    // One account, on the settlement network. No other rail is shown.
+    expect(overview.rails).toHaveLength(1);
+    expect(overview.rails[0]).toMatchObject({ rail: "goat", retired: false, unallocatedUnits: 7550n });
   });
 });
 
@@ -1024,7 +1058,7 @@ describe("unauthenticated callers", () => {
     ["listEngagements", () => listEngagements(null, MISSING_ID)],
     ["getEngagementDetail", () => getEngagementDetail(null, MISSING_ID)],
     ["getWalletOverview", () => getWalletOverview(null, MISSING_ID)],
-    ["depositSimulatedFunds", () => depositSimulatedFunds(null, MISSING_ID, { rail: "qatom", amount: "1" })],
+    ["depositSimulatedFunds", () => depositSimulatedFunds(null, MISSING_ID, { rail: "goat", amount: "1" })],
   ];
 
   it.each(calls)("%s is rejected", async (_name, call) => {

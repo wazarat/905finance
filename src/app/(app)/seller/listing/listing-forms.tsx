@@ -14,7 +14,6 @@ import { Input } from "@/components/ui/input";
 import {
   BILLING_UNIT_LABELS,
   CAPABILITIES,
-  PAYMENT_RAILS,
   STANDARD_CAPABILITIES,
   WEB3_CAPABILITIES,
   type Capability,
@@ -91,7 +90,6 @@ export type ListingProfileValues = {
   tagline: string;
   description: string;
   capabilities: string[];
-  intendedRails: string[];
 };
 
 export function ListingProfileForm({
@@ -105,7 +103,6 @@ export function ListingProfileForm({
   const errors = state.ok ? {} : (state.fieldErrors ?? {});
   const failed = !state.ok && state.values !== undefined;
   const selectedCapabilities = failed ? list(state, "capabilities", []) : initial.capabilities;
-  const selectedRails = failed ? list(state, "intendedRails", []) : initial.intendedRails;
 
   return (
     <form action={action} className="space-y-6" noValidate>
@@ -177,30 +174,6 @@ export function ListingProfileForm({
         <FieldError id="capabilities-error" messages={errors.capabilities} />
       </div>
 
-      <fieldset className="space-y-2" disabled={!canEdit}>
-        <legend className="text-sm font-medium text-foreground">Payment rails you plan to accept</legend>
-        <p className="text-xs text-muted-foreground">
-          Shown to buyers as declared. Connecting a receiving account for each rail comes later and
-          is required before any payment.
-        </p>
-        <div className="grid gap-2 sm:grid-cols-2">
-          {PAYMENT_RAILS.map((rail) => (
-            <label key={rail.key} className={checkCard}>
-              <input
-                type="checkbox"
-                name="intendedRails"
-                value={rail.key}
-                defaultChecked={selectedRails.includes(rail.key)}
-                className="mt-0.5 size-4 shrink-0 accent-[var(--brand)]"
-              />
-              <span>
-                <span className="block text-sm font-medium text-foreground">{rail.label}</span>
-                <span className="block text-xs text-muted-foreground">{rail.asset}</span>
-              </span>
-            </label>
-          ))}
-        </div>
-      </fieldset>
 
       {canEdit ? (
         <div className="flex flex-wrap items-center gap-3">

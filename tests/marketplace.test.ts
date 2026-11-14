@@ -243,13 +243,16 @@ describe("marketplace filters", () => {
 });
 
 describe("listing input validation", () => {
-  it("rejects unknown capabilities and rails", async () => {
+  it("rejects unknown capabilities", async () => {
     await expect(
       updateSellerListing(seller, sellerOrg, { ...validListing, capabilities: ["mind_reading"] }),
     ).rejects.toMatchObject({ code: "invalid" });
-    await expect(
-      updateSellerListing(seller, sellerOrg, { ...validListing, intendedRails: ["paypal"] }),
-    ).rejects.toMatchObject({ code: "invalid" });
+  });
+
+  it("does not let a seller choose how it is paid", async () => {
+    // Payment is on one network for every seller; a listing cannot declare another.
+    const updated = await updateSellerListing(seller, sellerOrg, { ...validListing, intendedRails: ["paypal"] });
+    expect(updated.intendedRails).not.toContain("paypal");
   });
 
   it("requires an https endpoint without embedded credentials", async () => {

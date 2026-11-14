@@ -55,7 +55,7 @@ async function WalletsContent() {
       <PageHeader
         eyebrow="Buying"
         title="Wallets"
-        description="A master account per payment rail, and one dedicated wallet per engagement. Rails are kept apart: funds on one are never counted as, or moved to, the other."
+        description="One master account, and one dedicated wallet per engagement. Payments are made on GOAT Network; an agent can spend only what its own engagement's wallet holds."
       />
 
       <section aria-label="Master accounts" className="grid gap-4 lg:grid-cols-2">
@@ -63,21 +63,21 @@ async function WalletsContent() {
           <div key={rail.rail} className="rounded-xl border border-border bg-card p-5">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="eyebrow">Master account</p>
+                <p className="eyebrow">{rail.retired ? "Retired account" : "Master account"}</p>
                 <h2 className="mt-1 text-lg font-semibold text-foreground">{railLabel(rail.rail)}</h2>
               </div>
               {rail.simulated ? <SimulatedBadge /> : null}
             </div>
-            <dl className="mt-5 grid grid-cols-2 gap-4">
+            <dl className="mt-5 grid grid-cols-2 gap-4 lg:grid-cols-1 xl:grid-cols-2">
               <div>
                 <dt className="text-xs text-muted-foreground">Unallocated</dt>
-                <dd className="figure mt-1 text-xl text-foreground">
+                <dd className="figure mt-1 text-xl whitespace-nowrap text-foreground">
                   {formatUnits(rail.unallocatedUnits, rail.asset)}
                 </dd>
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">In engagement wallets</dt>
-                <dd className="figure mt-1 text-xl text-foreground">
+                <dd className="figure mt-1 text-xl whitespace-nowrap text-foreground">
                   {formatUnits(rail.allocatedUnits, rail.asset)}
                 </dd>
               </div>
@@ -86,7 +86,12 @@ async function WalletsContent() {
               No agent can spend from this account. Funds leave it only when you authorize funding
               for a specific engagement.
             </p>
-            {rail.simulated ? (
+            {rail.retired ? (
+              <p className="mt-4 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground">
+                From an earlier demonstration. Nothing new is created on this account; it is shown
+                for its history.
+              </p>
+            ) : rail.simulated ? (
               <div className="mt-5 border-t border-border pt-4">
                 {canManage ? (
                   <AddSimulatedFundsForm rail={rail.rail} assetCode={rail.asset.code} />

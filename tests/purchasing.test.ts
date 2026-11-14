@@ -78,7 +78,7 @@ async function createSeller(label: string): Promise<Seller> {
     ...validListing,
     displayName: `${label} agents`,
     capabilities: ["unit_testing", "regression_testing", "api_testing", "dependency_checks"],
-    intendedRails: ["qatom", "goat"],
+    intendedRails: ["goat", "qatom"],
   });
   await saveSellerEndpoint(owner, org, validEndpoint);
   const offering = {} as Seller["offering"];
@@ -105,7 +105,7 @@ async function createBuyer(label: string): Promise<Buyer> {
     roles: "buyer",
   });
   const project = await createProject(owner, ws.organization.id, validProject);
-  await depositSimulatedFunds(owner, ws.organization.id, { rail: "qatom", amount: "100000" });
+  await depositSimulatedFunds(owner, ws.organization.id, { rail: "goat", amount: "100000" });
   return { owner, org: ws.organization.id, projectId: project.id };
 }
 
@@ -118,7 +118,7 @@ async function engage(buyer: Buyer, seller: Seller, setup: Setup = {}): Promise<
     projectId: buyer.projectId,
   });
   await saveMandateDraft(buyer.owner, engagement.id, {
-    rail: "qatom",
+    rail: "goat",
     totalBudget: setup.total ?? "100",
     perTransactionLimit: setup.perPurchase ?? "25",
     offeringIds: setup.offeringIds ?? Object.values(seller.offering),
@@ -146,9 +146,9 @@ function request(engagementId: string, seller: Seller, price: 4 | 8 | 15 | 25, o
     idempotencyKey: randomUUID(),
     quote: {
       sellerProfileId: seller.id,
-      asset: "USD-TDN",
+      asset: "SIM-USD",
       amountUnits: BigInt(price * 100),
-      recipient: simulatedRecipient("qatom", seller.id),
+      recipient: simulatedRecipient("goat", seller.id),
       ...quoteOverrides,
     },
     explanation: "Next in the test plan.",
@@ -195,7 +195,7 @@ async function paymentsFor(id: string) {
 
 /** A provider that behaves like the demo provider except where overridden. */
 function providerWith(overrides: Partial<PaymentProvider>): PaymentProvider & { calls: number } {
-  const base = new DemoPaymentProvider("qatom");
+  const base = new DemoPaymentProvider("goat");
   const wrapped = {
     rail: base.rail,
     name: base.name,
@@ -225,7 +225,7 @@ beforeAll(async () => {
   await addMember(db, acme.org, acmeAdmin.userId, "admin");
 });
 afterAll(async () => close());
-afterEach(() => setPaymentProvider("qatom", undefined));
+afterEach(() => setPaymentProvider("goat", undefined));
 
 describe("a purchase within the mandate", () => {
   it("is paid, verified, debited from the engagement wallet and recorded", async () => {
@@ -239,13 +239,13 @@ describe("a purchase within the mandate", () => {
     const [payment] = await paymentsFor(id);
     expect(payment).toMatchObject({
       amountUnits: 2500n,
-      asset: "USD-TDN",
-      rail: "qatom",
+      asset: "SIM-USD",
+      rail: "goat",
       sellerProfileId: alpha.id,
-      recipient: simulatedRecipient("qatom", alpha.id),
+      recipient: simulatedRecipient("goat", alpha.id),
       isSimulated: true,
     });
-    expect(payment.providerRef).toContain("demo-payment:qatom:");
+    expect(payment.providerRef).toContain("demo-payment:goat:");
     expect(payment.verifiedAt).toBeInstanceOf(Date);
 
     const budget = await getBudgetStatus(db, id);
@@ -447,8 +447,8 @@ describe("what the policy engine refuses", () => {
   it("a seller asking to be paid at an account the mandate does not authorize", async () => {
     const id = await engage(acme, alpha);
     for (const recipient of [
-      simulatedRecipient("qatom", beta.id),
-      simulatedRecipient("goat", alpha.id),
+      simulatedRecipient("goat", beta.id),
+      simulatedRecipient("qatom", alpha.id),
       "0x000000000000000000000000000000000000dEaD",
       "",
     ]) {
@@ -470,7 +470,7 @@ describe("what the policy engine refuses", () => {
         String(amountUnits),
       ).toMatchObject({ status: "blocked", reason: "amount_mismatch" });
     }
-    expect(await executePurchase(request(id, alpha, 4, { quote: { asset: "SIM-USD" } }))).toMatchObject({
+    expect(await executePurchase(request(id, alpha, 4, { quote: { asset: "USD-TDN" } }))).toMatchObject({
       status: "blocked",
       reason: "asset_mismatch",
     });
@@ -577,7 +577,7 @@ describe("limits enforced by the database", () => {
         engagementId: id,
         serviceOfferingId: alpha.offering[25],
         offeringName: "Direct insert",
-        asset: "USD-TDN",
+        asset: "SIM-USD",
         amountUnits: 100n,
         recipient: "x",
         idempotencyKey: randomUUID(),
@@ -638,7 +638,7 @@ describe("limits enforced by the database", () => {
       projectId: acme.projectId,
     });
     await saveMandateDraft(acme.owner, draft.id, {
-      rail: "qatom",
+      rail: "goat",
       totalBudget: "100",
       perTransactionLimit: "25",
       offeringIds: Object.values(alpha.offering),
@@ -714,8 +714,8 @@ describe("limits enforced by the database", () => {
         reservationId: reservation.id,
         engagementId: a,
         engagementWalletId: walletB.id,
-        rail: "qatom",
-        asset: "USD-TDN",
+        rail: "goat",
+        asset: "SIM-USD",
         amountUnits: 100n,
         recipient: "x",
         provider: "demo",
@@ -731,7 +731,7 @@ describe("when a payment does not clearly succeed", () => {
     const failing = providerWith({
       initiatePayment: async () => ({ status: "failed", reason: "Declined by the rail." }),
     });
-    setPaymentProvider("qatom", failing);
+    setPaymentProvider("goat", failing);
     const once = request(id, alpha, 25);
     const outcome = await executePurchase(once);
 
@@ -753,7 +753,7 @@ describe("when a payment does not clearly succeed", () => {
         throw new Error("timeout");
       },
     });
-    setPaymentProvider("qatom", silent);
+    setPaymentProvider("goat", silent);
     const once = request(id, alpha, 25);
     const outcome = await executePurchase(once);
 
@@ -767,13 +767,13 @@ describe("when a payment does not clearly succeed", () => {
     expect(again).toMatchObject({ status: "needs_reconciliation", replayed: true });
     expect(silent.calls).toBe(1);
 
-    setPaymentProvider("qatom", undefined);
+    setPaymentProvider("goat", undefined);
     expect(await buy(id, alpha, 25)).toMatchObject({ status: "blocked", reason: "budget_exceeded" });
   });
 
   it("does not record success for a payment it cannot verify", async () => {
     const id = await engage(acme, alpha);
-    setPaymentProvider("qatom", providerWith({ verifyPayment: async () => false }));
+    setPaymentProvider("goat", providerWith({ verifyPayment: async () => false }));
     const outcome = await buy(id, alpha, 25);
     expect(outcome).toMatchObject({ status: "needs_reconciliation" });
     expect(await paymentsFor(id)).toEqual([]);
@@ -782,7 +782,7 @@ describe("when a payment does not clearly succeed", () => {
 
   it("reconciles an unknown payment from the provider's record, once", async () => {
     const id = await engage(acme, alpha);
-    const base = new DemoPaymentProvider("qatom");
+    const base = new DemoPaymentProvider("goat");
     // The payment goes through at the provider, but the answer is lost on the way back.
     const lossy = providerWith({
       initiatePayment: async (payment) => {
@@ -792,7 +792,7 @@ describe("when a payment does not clearly succeed", () => {
       getPaymentStatus: base.getPaymentStatus.bind(base),
       verifyPayment: base.verifyPayment.bind(base),
     });
-    setPaymentProvider("qatom", lossy);
+    setPaymentProvider("goat", lossy);
     const outcome = await buy(id, alpha, 25);
     expect(outcome.status).toBe("needs_reconciliation");
     const purchaseId = outcome.purchase!.id;
@@ -812,7 +812,7 @@ describe("when a payment does not clearly succeed", () => {
   it("releases the reservation when reconciliation finds the payment failed", async () => {
     const id = await engage(acme, alpha);
     setPaymentProvider(
-      "qatom",
+      "goat",
       providerWith({
         initiatePayment: async () => {
           throw new Error("timeout");
@@ -916,7 +916,7 @@ describe("approval decisions", () => {
         engagementId: id,
         kind: "budget_increase",
         offeringName: "Second",
-        asset: "USD-TDN",
+        asset: "SIM-USD",
         assetDecimals: 2,
         proposedAmountUnits: 1n,
         totalAuthorizedUnits: 1n,

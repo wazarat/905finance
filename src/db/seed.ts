@@ -50,7 +50,7 @@ const SAMPLE_SELLERS: SampleSeller[] = [
       "api_testing",
       "dependency_checks",
     ],
-    intendedRails: ["qatom"],
+    intendedRails: ["goat"],
     endpoint: { url: "https://relay-qa.sample.invalid/agent", protocol: "https_json" },
     offerings: [
       {
@@ -102,7 +102,7 @@ const SAMPLE_SELLERS: SampleSeller[] = [
       "slither_static_analysis",
       "unit_testing",
     ],
-    intendedRails: ["goat", "qatom"],
+    intendedRails: ["goat"],
     endpoint: { url: "https://ledgerproof.sample.invalid/agent", protocol: "https_json" },
     offerings: [
       {

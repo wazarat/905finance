@@ -47,7 +47,6 @@ export async function saveMandateAction(_prev: FormState, formData: FormData): P
     const { actor } = await requireActionWorkspace();
     const days = text(formData, "expiresInDays").trim();
     await saveMandateDraft(actor, text(formData, "engagementId"), {
-      rail: text(formData, "rail"),
       totalBudget: text(formData, "totalBudget"),
       perTransactionLimit: text(formData, "perTransactionLimit"),
       offeringIds: textList(formData, "offeringIds"),

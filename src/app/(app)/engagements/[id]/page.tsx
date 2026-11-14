@@ -17,8 +17,9 @@ import { Button } from "@/components/ui/button";
 import {
   BILLING_UNIT_LABELS,
   capabilityLabel,
+  NETWORK_ROLES,
+  SETTLEMENT_RAIL,
   getRail,
-  isPaymentRail,
   railLabel,
 } from "@/lib/capabilities";
 import {
@@ -52,6 +53,25 @@ export const metadata: Metadata = { title: "Engagement" };
 
 const dateFormat = new Intl.DateTimeFormat("en", { dateStyle: "medium" });
 const dateTimeFormat = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" });
+
+/** The two networks every engagement uses, and the one job each does. */
+function NetworkRoles() {
+  return (
+    <dl className="mb-8 grid gap-3 sm:grid-cols-2">
+      {[NETWORK_ROLES.communication, NETWORK_ROLES.settlement].map((network) => (
+        <div key={network.name} className="rounded-lg border border-border bg-background/40 p-4">
+          <dt className="eyebrow">{network.role}</dt>
+          <dd className="mt-1.5">
+            <span className="font-medium text-foreground">{network.name}</span>
+            <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
+              {network.detail}
+            </span>
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -117,7 +137,7 @@ function MandateSummary({ detail }: { detail: EngagementDetail }) {
       <Row label="Per-purchase limit">
         <span className="figure">{formatUnits(mandate.perTransactionLimitUnits, mandate.asset)}</span>
       </Row>
-      <Row label="Payment rail">
+      <Row label="Payment">
         {detail.engagement.rail ? railLabel(detail.engagement.rail) : "—"} · {mandate.asset.code}
       </Row>
       <Row label="Approved seller">{detail.seller.displayName}</Row>
@@ -192,10 +212,8 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
   const ended = isTerminal(state);
 
   // --- draft mandate form inputs -------------------------------------------
-  const rails = seller.intendedRails.filter(isPaymentRail).map((key) => {
-    const rail = getRail(key)!;
-    return { key, label: rail.label, assetCode: rail.simulatedAsset.code };
-  });
+  // Payment is always on the settlement network; its asset is what the mandate is denominated in.
+  const settlementAsset = mandate?.asset.code ?? getRail(SETTLEMENT_RAIL)!.simulatedAsset.code;
   const activeOfferings = seller.offerings.filter((o) => o.isActive);
   const offeringOptions = activeOfferings.map((o) => ({
     id: o.id,
@@ -204,7 +222,6 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
     detail: o.description || capabilityLabel(o.capability),
   }));
   const draftValues = {
-    rail: engagement.rail ?? rails[0]?.key ?? "",
     totalBudget: mandate
       ? unitsToDecimalString(mandate.totalAuthorizedUnits, mandate.asset.decimals)
       : "100.00",
@@ -320,15 +337,11 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
             title="Spending mandate"
             description="Set what the agent may spend, on what, and until when. Saving is not authorizing."
           >
-            {rails.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                {seller.displayName} hasn&apos;t declared a payment rail yet, so a mandate can&apos;t be
-                set up with this seller.
-              </p>
-            ) : can.draft ? (
+            <NetworkRoles />
+            {can.draft ? (
               <MandateForm
                 engagementId={engagement.id}
-                rails={rails}
+                assetCode={settlementAsset}
                 offerings={offeringOptions}
                 initial={draftValues}
               />

@@ -1,7 +1,8 @@
 import { z } from "zod";
 import {
   CAPABILITY_KEYS,
-  PAYMENT_RAIL_KEYS,
+  SETTLEMENT_RAIL,
+  railLabel,
   PROJECT_FIXTURE_KEYS,
   getFixture,
 } from "@/lib/capabilities";
@@ -115,7 +116,6 @@ export const sellerListingInput = z.object({
   tagline: optionalText(140),
   description: optionalText(4000),
   capabilities: z.array(z.enum(CAPABILITY_KEYS)).max(CAPABILITY_KEYS.length).default([]),
-  intendedRails: z.array(z.enum(PAYMENT_RAIL_KEYS)).max(PAYMENT_RAIL_KEYS.length).default([]),
 });
 export type SellerListingInput = z.infer<typeof sellerListingInput>;
 
@@ -155,11 +155,21 @@ export const MANDATE_MIN_DAYS = 1;
 export const MANDATE_MAX_DAYS = 365;
 
 /**
+ * Payments are made on one network. A caller may leave the rail out or name
+ * that network; naming any other is an error rather than something to
+ * quietly correct.
+ */
+const settlementRail = z
+  .literal(SETTLEMENT_RAIL, { error: `Payments are made on ${railLabel(SETTLEMENT_RAIL)}.` })
+  .default(SETTLEMENT_RAIL);
+
+/**
  * A draft mandate as entered. Amounts stay as text here and are converted to
  * exact units in the data layer, where the rail's asset is known.
  */
 export const mandateInput = z.object({
-  rail: z.enum(PAYMENT_RAIL_KEYS, { error: "Choose a payment rail." }),
+  /** Not a choice: present only so that a request naming another network is refused, not ignored. */
+  rail: settlementRail,
   totalBudget: z.string().trim().min(1, "Enter a total budget.").max(40),
   perTransactionLimit: z.string().trim().min(1, "Enter a per-purchase limit.").max(40),
   offeringIds: z.array(uuid("Choose valid services.")).min(1, "Permit at least one service.").max(50),
@@ -179,7 +189,7 @@ export const fundingInput = z.object({
 });
 
 export const depositInput = z.object({
-  rail: z.enum(PAYMENT_RAIL_KEYS, { error: "Choose a payment rail." }),
+  rail: settlementRail,
   amount: z.string().trim().min(1, "Enter an amount.").max(40),
 });
 

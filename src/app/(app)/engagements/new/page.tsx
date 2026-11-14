@@ -6,7 +6,6 @@ import { PageHeader, Panel } from "@/components/app/page-header";
 import { PageSkeleton } from "@/components/app/page-skeleton";
 import { CapabilityChip, SampleBadge } from "@/components/sellers/badges";
 import { Button } from "@/components/ui/button";
-import { railLabel } from "@/lib/capabilities";
 import { formatMoney } from "@/lib/money";
 import { roleHasPermission } from "@/server/authz";
 import { getPublicSellerBySlug } from "@/server/marketplace";
@@ -91,11 +90,6 @@ async function NewEngagementContent({ searchParams }: PageProps<"/engagements/ne
                 <CapabilityChip key={capability} capability={capability} />
               ))}
             </div>
-            <p className="text-xs text-muted-foreground">
-              {seller.intendedRails.length > 0
-                ? `Accepts ${seller.intendedRails.map(railLabel).join(" and ")}`
-                : "Has not declared a payment rail"}
-            </p>
           </div>
           <div className="shrink-0 sm:text-right">
             <p className="eyebrow">Services from</p>

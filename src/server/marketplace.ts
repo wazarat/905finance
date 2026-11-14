@@ -32,7 +32,6 @@ export type PublicSeller = {
   tagline: string;
   description: string;
   capabilities: string[];
-  intendedRails: string[];
   isSample: boolean;
   status: ListingStatus;
   supportsWeb3: boolean;
@@ -55,7 +54,6 @@ const publicSellerColumns = {
   tagline: sellerProfiles.tagline,
   description: sellerProfiles.description,
   capabilities: sellerProfiles.capabilities,
-  intendedRails: sellerProfiles.intendedRails,
   isSample: sellerProfiles.isSample,
   status: sellerProfiles.status,
 };
@@ -80,7 +78,6 @@ type SellerRow = {
   tagline: string;
   description: string;
   capabilities: string[];
-  intendedRails: string[];
   isSample: boolean;
   status: ListingStatus;
 };
@@ -111,7 +108,6 @@ function toPublicSeller(row: SellerRow, offerings: OfferingRow[]): PublicSeller 
     tagline: row.tagline,
     description: row.description,
     capabilities: row.capabilities,
-    intendedRails: row.intendedRails,
     isSample: row.isSample,
     status: row.status,
     supportsWeb3: row.capabilities.some(isWeb3Capability),

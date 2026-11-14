@@ -20,9 +20,6 @@ import {
   saveMandateAction,
 } from "../actions";
 
-const choiceCard =
-  "flex cursor-pointer flex-col rounded-xl border border-border bg-background/40 p-4 transition-colors has-[:checked]:border-brand has-[:checked]:bg-brand-dim has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring hover:border-brand/40";
-
 const checkCard =
   "flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-background/40 p-3 transition-colors has-[:checked]:border-brand/60 has-[:checked]:bg-brand-dim has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring hover:border-brand/30";
 
@@ -40,10 +37,8 @@ function echoed(state: FormState, key: string, fallback: string): string {
   return typeof value === "string" ? value : fallback;
 }
 
-export type MandateFormRail = { key: string; label: string; assetCode: string };
 export type MandateFormOffering = { id: string; name: string; priceLabel: string; detail: string };
 export type MandateFormValues = {
-  rail: string;
   totalBudget: string;
   perTransactionLimit: string;
   offeringIds: string[];
@@ -54,20 +49,19 @@ export type MandateFormValues = {
 /** Edits the draft mandate. Saving it authorizes nothing. */
 export function MandateForm({
   engagementId,
-  rails,
+  assetCode,
   offerings,
   initial,
 }: {
   engagementId: string;
-  rails: MandateFormRail[];
+  /** The asset payments are made in. Fixed by the settlement network, not chosen here. */
+  assetCode: string;
   offerings: MandateFormOffering[];
   initial: MandateFormValues;
 }) {
   const [state, action] = useActionState(saveMandateAction, initialFormState);
   const errors = state.ok ? {} : (state.fieldErrors ?? {});
   const failed = !state.ok && state.values !== undefined;
-  const [rail, setRail] = useState(echoed(state, "rail", initial.rail));
-  const assetCode = rails.find((r) => r.key === rail)?.assetCode ?? "";
 
   const echoedOfferings = state.values?.offeringIds;
   const selected = failed
@@ -81,32 +75,6 @@ export function MandateForm({
   return (
     <form action={action} className="space-y-8" noValidate>
       <input type="hidden" name="engagementId" value={engagementId} />
-
-      <fieldset className="space-y-3">
-        <legend className="text-sm font-medium text-foreground">Payment rail</legend>
-        <p className="text-xs text-muted-foreground">
-          One rail per engagement. It cannot be changed after you authorize.
-        </p>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {rails.map((option) => (
-            <label key={option.key} className={choiceCard}>
-              <input
-                type="radio"
-                name="rail"
-                value={option.key}
-                checked={rail === option.key}
-                onChange={() => setRail(option.key)}
-                className="sr-only"
-              />
-              <span className="font-medium text-foreground">{option.label}</span>
-              <span className="mt-1 text-xs text-muted-foreground">
-                Amounts in {option.assetCode} · simulated
-              </span>
-            </label>
-          ))}
-        </div>
-        <FieldError id="rail-error" messages={errors.rail} />
-      </fieldset>
 
       <div className="grid gap-6 sm:grid-cols-2">
         <Field

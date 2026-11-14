@@ -5,7 +5,7 @@ import {
   NotConnectedBadge,
   SampleBadge,
 } from "@/components/sellers/badges";
-import { BILLING_UNIT_LABELS, capabilityLabel, railLabel } from "@/lib/capabilities";
+import { BILLING_UNIT_LABELS, NETWORK_ROLES, capabilityLabel } from "@/lib/capabilities";
 import { formatMoney } from "@/lib/money";
 import type { PublicSellerDetail } from "@/server/marketplace";
 
@@ -131,15 +131,17 @@ export function SellerDetail({
         {action}
         <div className="rounded-xl border border-border bg-card px-5 py-2">
           <dl className="divide-y divide-border">
-            <FactRow label="Payment rails">
-              {seller.intendedRails.length > 0 ? (
-                <span className="flex flex-col items-end gap-1">
-                  <span>{seller.intendedRails.map(railLabel).join(", ")}</span>
-                  <span className="text-xs text-muted-foreground">Declared, not yet connected</span>
-                </span>
-              ) : (
-                <NotConnectedBadge label="None declared" />
-              )}
+            <FactRow label="Payment">
+              <span className="flex flex-col items-end gap-1">
+                <span>{NETWORK_ROLES.settlement.name}, in USD</span>
+                <span className="text-xs text-muted-foreground">Simulated until connected</span>
+              </span>
+            </FactRow>
+            <FactRow label="Agent communication">
+              <span className="flex flex-col items-end gap-1">
+                <span>{NETWORK_ROLES.communication.name}</span>
+                <span className="text-xs text-muted-foreground">Not connected yet</span>
+              </span>
             </FactRow>
             <FactRow label="Agent endpoint">
               {seller.endpointProtocol ? (
