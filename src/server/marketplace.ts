@@ -3,6 +3,7 @@ import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import type { BillingUnit, EndpointProtocol, ListingStatus } from "@/db/schema";
 import { isWeb3Capability } from "@/lib/capabilities";
+import { findPublicIdentity, type PublicIdentity } from "./identity";
 import { qatomItemFor } from "./qatom/config";
 
 const { sellerProfiles, serviceOfferings, serviceEndpoints } = schema;
@@ -48,6 +49,8 @@ export type PublicSellerDetail = PublicSeller & {
   endpointProtocol: EndpointProtocol | null;
   /** The seller's Qatom catalog item, when its agent can be reached over Qatom. Public on Qatom already. */
   qatomCatalogItemId: number | null;
+  /** The seller's ERC-8004 identity on GOAT, as last read from the chain. Null when none is linked. */
+  identity: PublicIdentity | null;
 };
 
 const publicSellerColumns = {
@@ -144,6 +147,7 @@ export async function loadPublicSellerDetail(sellerProfileId: string): Promise<P
     offerings: offerings.map(toPublicOffering),
     endpointProtocol: endpoint?.protocol ?? null,
     qatomCatalogItemId: qatomItemFor(row.slug),
+    identity: await findPublicIdentity(row.id),
   };
 }
 

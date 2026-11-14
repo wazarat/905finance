@@ -10,6 +10,7 @@ import {
   textList,
   type FormState,
 } from "@/server/form-state";
+import { linkSellerIdentity, refreshOwnSellerIdentity, unlinkSellerIdentity } from "@/server/identity";
 import { requireActionWorkspace } from "@/server/page-context";
 import {
   createOffering,
@@ -107,4 +108,47 @@ export async function withdrawListingAction(_prev: FormState, _formData: FormDat
   }
   refresh();
   return { ok: true, message: "Returned to draft." };
+}
+
+/** Link the listing to an ERC-8004 agent id. Everything else is read from the chain. */
+export async function linkIdentityAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  let confirmed: boolean;
+  try {
+    const { actor, workspace } = await requireActionWorkspace();
+    const saved = await linkSellerIdentity(actor, workspace.organization.id, {
+      agentId: text(formData, "agentId"),
+    });
+    confirmed = saved.confirmed;
+  } catch (error) {
+    return failureState(error, formValues(formData));
+  }
+  refresh();
+  return {
+    ok: true,
+    message: confirmed
+      ? "Linked and confirmed by the agent's registration."
+      : "Linked as an unconfirmed claim. See below for what confirms it.",
+  };
+}
+
+export async function refreshIdentityAction(_prev: FormState, _formData: FormData): Promise<FormState> {
+  try {
+    const { actor, workspace } = await requireActionWorkspace();
+    await refreshOwnSellerIdentity(actor, workspace.organization.id);
+  } catch (error) {
+    return failureState(error);
+  }
+  refresh();
+  return { ok: true, message: "Read again from GOAT Testnet3." };
+}
+
+export async function unlinkIdentityAction(_prev: FormState, _formData: FormData): Promise<FormState> {
+  try {
+    const { actor, workspace } = await requireActionWorkspace();
+    await unlinkSellerIdentity(actor, workspace.organization.id);
+  } catch (error) {
+    return failureState(error);
+  }
+  refresh();
+  return { ok: true, message: "Identity unlinked." };
 }

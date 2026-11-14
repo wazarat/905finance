@@ -21,6 +21,11 @@ import {
   WithdrawListingForm,
 } from "./listing-forms";
 
+import { ChainLink } from "@/components/goat/chain-link";
+import { agentExplorerLink } from "@/lib/goat";
+import { getOwnSellerIdentity } from "@/server/identity";
+import { IdentityControls, LinkIdentityForm } from "./identity-forms";
+
 export const metadata: Metadata = { title: "Listing" };
 
 const REQUIREMENTS = [
@@ -52,6 +57,7 @@ async function SellerListingContent() {
   }
 
   const { profile, offerings, endpoint } = listing;
+  const identity = await getOwnSellerIdentity(actor, workspace.organization.id);
   const canManage = roleHasPermission(workspace.role, "seller_listing.manage");
   const locked = profile.status === "suspended" || profile.status === "pending_review";
   const canEdit = canManage && !locked;
@@ -146,6 +152,100 @@ async function SellerListingContent() {
           canEdit={canEdit}
           initial={{ url: endpoint?.url ?? "", protocol: endpoint?.protocol ?? "https_json" }}
         />
+      </Panel>
+
+      <Panel
+        title="ERC-8004 identity"
+        description="Your agent's on-chain identity on GOAT Testnet3. It is where buyers see who you are and where you are paid."
+      >
+        {identity?.identity ? (
+          <div className="space-y-5">
+            <dl className="grid gap-x-6 gap-y-4 text-sm sm:grid-cols-2">
+              <div>
+                <dt className="text-muted-foreground">Agent</dt>
+                <dd className="mt-0.5">
+                  <a
+                    href={agentExplorerLink(identity.identity.agentId)}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="text-foreground underline decoration-border underline-offset-4 hover:decoration-foreground"
+                  >
+                    Agent {identity.identity.agentId}
+                  </a>
+                </dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Status</dt>
+                <dd className={identity.identity.confirmed ? "mt-0.5 text-brand" : "mt-0.5 text-warn"}>
+                  {identity.identity.confirmed ? "Confirmed by its registration" : "Unconfirmed claim"}
+                </dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="text-muted-foreground">Registered owner</dt>
+                <dd className="mt-0.5">
+                  <ChainLink value={identity.identity.ownerAddress} />
+                </dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="text-muted-foreground">Receiving wallet</dt>
+                <dd className="mt-0.5">
+                  <ChainLink value={identity.identity.agentWallet} />
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                    {identity.identity.agentWalletSet
+                      ? "Set in the registry."
+                      : "No wallet is set in the registry, so the owner stands in."}
+                  </span>
+                </dd>
+              </div>
+              <div className="min-w-0 sm:col-span-2">
+                <dt className="text-muted-foreground">Registration document</dt>
+                <dd className="figure mt-0.5 text-xs break-all text-ink-soft">
+                  {identity.identity.agentUri || "None"}
+                  {identity.identity.registrationProblem ? (
+                    <span className="mt-0.5 block font-sans text-sm text-warn">
+                      {identity.identity.registrationProblem}
+                    </span>
+                  ) : null}
+                </dd>
+              </div>
+            </dl>
+            {!identity.identity.confirmed ? (
+              <div className="rounded-lg border border-warn/30 bg-warn-dim p-4 text-sm leading-relaxed text-ink-soft">
+                <p className="font-medium text-foreground">Not confirmed yet</p>
+                <p className="mt-1">
+                  Anyone can type an agent id, so a link counts only when the agent points back. Add
+                  this listing to the <code className="figure">services</code> of the agent&apos;s
+                  registration document, make sure its <code className="figure">registrations</code>{" "}
+                  entry names this registry and agent id, then choose Read again. Until then buyers
+                  see an unconfirmed claim and the wallet above is not used for payment.
+                </p>
+                <pre className="figure mt-3 overflow-x-auto rounded-md border border-border bg-background/60 p-3 text-xs text-ink-soft">
+                  {JSON.stringify({ name: "905finance", endpoint: identity.listingUrl }, null, 2)}
+                </pre>
+              </div>
+            ) : null}
+            {canManage ? (
+              <div className="grid gap-6 border-t border-border pt-5 sm:grid-cols-2">
+                <IdentityControls />
+                <LinkIdentityForm currentAgentId={identity.identity.agentId} />
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <p className="max-w-2xl text-sm leading-relaxed text-ink-soft">
+              Not linked. Register your agent in the ERC-8004 Identity Registry on GOAT Testnet3,
+              then enter its id here. The owner, the receiving wallet and the registration are read
+              from the chain; nothing else is typed in. Registering is done from your own wallet,
+              not by 905 Finance.
+            </p>
+            {canManage ? (
+              <LinkIdentityForm currentAgentId={null} />
+            ) : (
+              <p className="text-sm text-muted-foreground">Owners and admins can link an identity.</p>
+            )}
+          </div>
+        )}
       </Panel>
 
       {profile.status === "draft" ? (

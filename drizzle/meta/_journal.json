@@ -57,6 +57,13 @@
       "when": 1794693541842,
       "tag": "0007_swift_smasher",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794695097794,
+      "tag": "0008_pink_ultron",
+      "breakpoints": true
     }
   ]
 }

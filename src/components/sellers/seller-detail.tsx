@@ -5,9 +5,13 @@ import {
   NotConnectedBadge,
   SampleBadge,
 } from "@/components/sellers/badges";
+import { ChainLink } from "@/components/goat/chain-link";
 import { BILLING_UNIT_LABELS, NETWORK_ROLES, capabilityLabel } from "@/lib/capabilities";
+import { agentExplorerLink } from "@/lib/goat";
 import { formatMoney } from "@/lib/money";
 import type { PublicSellerDetail } from "@/server/marketplace";
+
+const dateFormat = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" });
 
 const PROTOCOL_LABELS = {
   https_json: "HTTPS / JSON",
@@ -158,16 +162,66 @@ export function SellerDetail({
               )}
             </FactRow>
             <FactRow label="ERC-8004 identity">
-              <NotConnectedBadge label="Not registered" />
+              {seller.identity ? (
+                <span className="flex flex-col items-end gap-1">
+                  <a
+                    href={agentExplorerLink(seller.identity.agentId)}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="underline decoration-border underline-offset-4 hover:decoration-foreground"
+                  >
+                    Agent {seller.identity.agentId}
+                  </a>
+                  <span className={seller.identity.confirmed ? "text-xs text-brand" : "text-xs text-warn"}>
+                    {seller.identity.confirmed ? "Confirmed by its registration" : "Unconfirmed claim"}
+                  </span>
+                </span>
+              ) : (
+                <NotConnectedBadge label="Not linked" />
+              )}
             </FactRow>
+            {seller.identity ? (
+              <>
+                <FactRow label="Receiving wallet">
+                  <span className="flex flex-col items-end gap-1">
+                    <ChainLink value={seller.identity.agentWallet} short />
+                    <span className="text-xs text-muted-foreground">
+                      {seller.identity.confirmed
+                        ? seller.identity.agentWalletSet
+                          ? "Set in the registry"
+                          : "The agent's owner; no wallet set"
+                        : "Not used for payment"}
+                    </span>
+                  </span>
+                </FactRow>
+                <FactRow label="Registered owner">
+                  <ChainLink value={seller.identity.ownerAddress} short />
+                </FactRow>
+              </>
+            ) : null}
             <FactRow label="On-chain reputation">
-              <span className="text-muted-foreground">No feedback recorded</span>
+              {seller.identity && seller.identity.reputation.count > 0 ? (
+                <span className="flex flex-col items-end gap-1">
+                  <span className="figure">{seller.identity.reputation.value}</span>
+                  <span className="text-xs text-muted-foreground">
+                    Registry summary of {seller.identity.reputation.count} feedback{" "}
+                    {seller.identity.reputation.count === 1 ? "entry" : "entries"} from{" "}
+                    {seller.identity.reputation.clients}{" "}
+                    {seller.identity.reputation.clients === 1 ? "address" : "addresses"}
+                  </span>
+                </span>
+              ) : (
+                <span className="text-muted-foreground">No feedback recorded</span>
+              )}
             </FactRow>
           </dl>
         </div>
         <p className="px-1 text-xs leading-relaxed text-muted-foreground">
-          Identity and reputation appear here once a seller links an ERC-8004 registration. A
-          registration identifies an agent; it is not verification of a business.
+          {seller.identity
+            ? `Read from GOAT Testnet3 on ${dateFormat.format(seller.identity.refreshedAt)}. `
+            : "Identity and reputation appear here once a seller links an ERC-8004 registration. "}
+          A registration identifies an agent; it is not verification of a business. Reputation is
+          shown as the registry reports it and is not checked or weighted by 905 Finance.
         </p>
       </aside>
     </div>

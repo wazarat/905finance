@@ -276,6 +276,44 @@ export const serviceEndpoints = pgTable("service_endpoints", {
   updatedAt: updatedAt(),
 });
 
+/**
+ * A seller's ERC-8004 identity on GOAT, as last read from the chain.
+ *
+ * Nothing in this row is typed in by the seller except the agent id. The
+ * owner, the receiving wallet and the registration are what the registry
+ * and the registration document said when they were read. `confirmed` is
+ * true only when the agent's own registration document points back at this
+ * listing, so that a seller cannot dress its listing in another agent's
+ * identity or reputation.
+ */
+export const sellerIdentities = pgTable(
+  "seller_identities",
+  {
+    sellerProfileId: uuid("seller_profile_id")
+      .primaryKey()
+      .references(() => sellerProfiles.id, { onDelete: "cascade" }),
+    /** `eip155:<chain>:<identity registry>`. */
+    agentRegistry: text("agent_registry").notNull(),
+    agentId: text("agent_id").notNull(),
+    ownerAddress: text("owner_address").notNull(),
+    /** Where the registry says the agent is paid. */
+    agentWallet: text("agent_wallet").notNull(),
+    agentWalletSet: boolean("agent_wallet_set").notNull().default(false),
+    agentUri: text("agent_uri").notNull().default(""),
+    registration: jsonb("registration").$type<Record<string, unknown>>(),
+    registrationProblem: text("registration_problem"),
+    confirmed: boolean("confirmed").notNull().default(false),
+    reputationClients: integer("reputation_clients").notNull().default(0),
+    reputationCount: integer("reputation_count").notNull().default(0),
+    /** The registry's own summary value, as a decimal string. Null when there is no feedback. */
+    reputationValue: text("reputation_value"),
+    linkedBy: uuid("linked_by").references(() => users.id, { onDelete: "set null" }),
+    linkedAt: timestamp("linked_at", { withTimezone: true }).notNull().defaultNow(),
+    refreshedAt: timestamp("refreshed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("seller_identities_agent_uq").on(t.agentRegistry, t.agentId)],
+);
+
 // ---------------------------------------------------------------------------
 // Projects
 // ---------------------------------------------------------------------------
@@ -1160,6 +1198,7 @@ export type PaymentTransaction = typeof paymentTransactions.$inferSelect;
 export type ApprovalRequest = typeof approvalRequests.$inferSelect;
 export type AgentMessage = typeof agentMessages.$inferSelect;
 export type QatomConnection = typeof qatomConnections.$inferSelect;
+export type SellerIdentity = typeof sellerIdentities.$inferSelect;
 export type TestingJob = typeof testingJobs.$inferSelect;
 export type TestingResult = typeof testingResults.$inferSelect;
 export type Finding = typeof findings.$inferSelect;
