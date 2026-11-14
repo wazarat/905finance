@@ -43,6 +43,13 @@
       "when": 1794688744912,
       "tag": "0005_purchasing_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794690386777,
+      "tag": "0006_first_piledriver",
+      "breakpoints": true
     }
   ]
 }

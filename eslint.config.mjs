@@ -23,6 +23,9 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     "drizzle/**",
+    // Fixtures are test subjects with deliberate defects, not application code.
+    "fixtures/**",
+    "worker/.runs/**",
   ]),
 ]);
 

@@ -1,0 +1,7 @@
+{
+  "name": "sample-node-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Test fixture: a small ordering service with two deliberate defects."
+}

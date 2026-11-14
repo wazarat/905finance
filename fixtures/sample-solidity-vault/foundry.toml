@@ -1,0 +1,19 @@
+[profile.default]
+src = "src"
+test = "test"
+out = "out"
+cache_path = "cache"
+libs = []
+solc = "0.8.28"
+optimizer = false
+
+# A fixed seed makes fuzz and invariant runs reproducible: the same inputs,
+# the same counterexamples, every time.
+[fuzz]
+runs = 256
+seed = "0x905"
+
+[invariant]
+runs = 32
+depth = 24
+fail_on_revert = false

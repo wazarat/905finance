@@ -22,9 +22,8 @@ import {
  * Identity, organizations, buyer and seller profiles, service listings and
  * projects (Milestone 1); engagements, spending mandates and the wallet model
  * (Milestone 2); agent runs, purchases, reservations, payments, approvals and
- * agent messages (Milestone 3).
- *
- * Testing jobs, results and findings arrive with real test execution.
+ * agent messages (Milestone 3); testing jobs, results, findings and workers
+ * (Milestone 4).
  */
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
@@ -113,6 +112,15 @@ export const approvalStatus = pgEnum("approval_status", [
   "cancelled",
 ]);
 export const agentRunStatus = pgEnum("agent_run_status", ["running", "completed", "paused", "failed"]);
+export const testingJobStatus = pgEnum("testing_job_status", [
+  "queued",
+  "running",
+  "completed",
+  "failed",
+]);
+/** What the tests found: all passed, something failed, or the run itself could not complete. */
+export const testingOutcome = pgEnum("testing_outcome", ["passed", "failed", "error"]);
+export const findingSeverity = pgEnum("finding_severity", ["critical", "high", "medium", "low", "info"]);
 export const messageDirection = pgEnum("message_direction", [
   "agent_to_seller",
   "seller_to_agent",
@@ -903,6 +911,128 @@ export const agentMessages = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// Testing: jobs, results and findings
+// ---------------------------------------------------------------------------
+
+/**
+ * A test to be executed for one paid purchase. Jobs wait in this table until
+ * a testing worker claims one; a claim is a lease that expires, so a worker
+ * that dies does not strand a job.
+ */
+export const testingJobs = pgTable(
+  "testing_jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sequence: bigint("sequence", { mode: "number" }).notNull().generatedAlwaysAsIdentity(),
+    /** One job per purchase: a purchase is never executed twice. */
+    purchaseId: uuid("purchase_id")
+      .notNull()
+      .unique()
+      .references(() => purchases.id, { onDelete: "restrict" }),
+    engagementId: uuid("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "restrict" }),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "restrict" }),
+    sellerProfileId: uuid("seller_profile_id")
+      .notNull()
+      .references(() => sellerProfiles.id, { onDelete: "restrict" }),
+    serviceOfferingId: uuid("service_offering_id")
+      .notNull()
+      .references(() => serviceOfferings.id, { onDelete: "restrict" }),
+    /** The test type. Together with the fixture it selects what the worker runs. */
+    capability: text("capability").notNull(),
+    fixtureKey: text("fixture_key").notNull(),
+    status: testingJobStatus("status").notNull().default("queued"),
+    attempts: integer("attempts").notNull().default(0),
+    claimedBy: text("claimed_by"),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    failureReason: text("failure_reason"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("testing_jobs_queue_idx").on(t.status, t.sequence),
+    index("testing_jobs_engagement_idx").on(t.engagementId, t.sequence),
+  ],
+);
+
+/**
+ * What a worker reported for a job. Every count is taken from the testing
+ * tool's own machine-readable report; counts are null where a tool has no
+ * such notion (compilation, static analysis).
+ */
+export const testingResults = pgTable(
+  "testing_results",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    jobId: uuid("job_id")
+      .notNull()
+      .unique()
+      .references(() => testingJobs.id, { onDelete: "cascade" }),
+    outcome: testingOutcome("outcome").notNull(),
+    testsTotal: integer("tests_total"),
+    testsPassed: integer("tests_passed"),
+    testsFailed: integer("tests_failed"),
+    testsSkipped: integer("tests_skipped"),
+    durationMs: integer("duration_ms").notNull(),
+    tool: text("tool").notNull(),
+    toolVersion: text("tool_version").notNull().default(""),
+    /** The command the worker ran, for the record. */
+    command: text("command").notNull().default(""),
+    exitCode: integer("exit_code"),
+    /** The tool's output, kept as evidence. */
+    log: text("log").notNull().default(""),
+    errorMessage: text("error_message"),
+    workerId: text("worker_id").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check(
+      "testing_results_counts_consistent",
+      sql`${t.testsTotal} IS NULL OR (
+        ${t.testsTotal} >= 0 AND ${t.testsPassed} >= 0 AND ${t.testsFailed} >= 0 AND ${t.testsSkipped} >= 0
+        AND ${t.testsPassed} + ${t.testsFailed} + ${t.testsSkipped} = ${t.testsTotal}
+      )`,
+    ),
+    check("testing_results_duration_nonnegative", sql`${t.durationMs} >= 0`),
+  ],
+);
+
+/** One thing a job found: a failing test, a violated property, or a static-analysis result. */
+export const findings = pgTable(
+  "findings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sequence: bigint("sequence", { mode: "number" }).notNull().generatedAlwaysAsIdentity(),
+    jobId: uuid("job_id")
+      .notNull()
+      .references(() => testingJobs.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    severity: findingSeverity("severity").notNull(),
+    /** test_failure, static_analysis or compiler. */
+    category: text("category").notNull(),
+    location: text("location").notNull().default(""),
+    evidence: text("evidence").notNull().default(""),
+    recommendation: text("recommendation").notNull().default(""),
+    createdAt: createdAt(),
+  },
+  (t) => [index("findings_job_idx").on(t.jobId, t.sequence)],
+);
+
+/** Testing workers that have checked in, and what each can run. */
+export const testingWorkers = pgTable("testing_workers", {
+  workerId: text("worker_id").primaryKey(),
+  tools: jsonb("tools").$type<Record<string, string | null>>().notNull().default({}),
+  /** "fixture:capability" pairs the worker reported it can execute. */
+  supports: text("supports").array().notNull().default(sql`'{}'::text[]`),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
 // Audit
 // ---------------------------------------------------------------------------
 
@@ -954,6 +1084,9 @@ export type PaymentAttempt = typeof paymentAttempts.$inferSelect;
 export type PaymentTransaction = typeof paymentTransactions.$inferSelect;
 export type ApprovalRequest = typeof approvalRequests.$inferSelect;
 export type AgentMessage = typeof agentMessages.$inferSelect;
+export type TestingJob = typeof testingJobs.$inferSelect;
+export type TestingResult = typeof testingResults.$inferSelect;
+export type Finding = typeof findings.$inferSelect;
 
 export type OrgRole = (typeof orgRole.enumValues)[number];
 export type ListingStatus = (typeof listingStatus.enumValues)[number];
@@ -968,3 +1101,6 @@ export type PurchaseStatus = (typeof purchaseStatus.enumValues)[number];
 export type ApprovalKind = (typeof approvalKind.enumValues)[number];
 export type ApprovalStatus = (typeof approvalStatus.enumValues)[number];
 export type MessageDirection = (typeof messageDirection.enumValues)[number];
+export type TestingJobStatus = (typeof testingJobStatus.enumValues)[number];
+export type TestingOutcome = (typeof testingOutcome.enumValues)[number];
+export type FindingSeverity = (typeof findingSeverity.enumValues)[number];

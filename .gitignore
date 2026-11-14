@@ -42,3 +42,10 @@ next-env.d.ts
 
 # keep the env template tracked
 !.env.example
+
+# test fixtures and the testing worker: build output and run directories
+/fixtures/**/node_modules/
+/fixtures/**/out/
+/fixtures/**/cache/
+/worker/node_modules/
+/worker/.runs/

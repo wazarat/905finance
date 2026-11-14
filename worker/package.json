@@ -1,0 +1,13 @@
+{
+  "name": "testing-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Isolated worker that executes test jobs for 905 Finance and reports structured results.",
+  "scripts": {
+    "start": "node src/main.mjs"
+  },
+  "dependencies": {
+    "vitest": "5.1.0"
+  }
+}
