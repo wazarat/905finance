@@ -20,11 +20,11 @@ import {
 
 /**
  * Identity, organizations, buyer and seller profiles, service listings and
- * projects (Milestone 1), then engagements, spending mandates and the wallet
- * model (Milestone 2).
+ * projects (Milestone 1); engagements, spending mandates and the wallet model
+ * (Milestone 2); agent runs, purchases, reservations, payments, approvals and
+ * agent messages (Milestone 3).
  *
- * Payments, reservations, testing jobs, approvals and agent messages are
- * introduced by the milestones that implement them.
+ * Testing jobs, results and findings arrive with real test execution.
  */
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
@@ -87,6 +87,36 @@ export const ledgerEntryKind = pgEnum("ledger_entry_kind", [
   "simulated_deposit",
   "funding_debit",
   "funding_credit",
+  "payment_debit",
+]);
+export const purchaseStatus = pgEnum("purchase_status", [
+  "blocked",
+  "reserved",
+  "paid",
+  "delivered",
+  "payment_failed",
+  "needs_reconciliation",
+]);
+export const reservationStatus = pgEnum("reservation_status", ["held", "committed", "released"]);
+export const paymentAttemptStatus = pgEnum("payment_attempt_status", [
+  "initiated",
+  "succeeded",
+  "failed",
+  "uncertain",
+]);
+export const approvalKind = pgEnum("approval_kind", ["budget_increase", "additional_funding"]);
+export const approvalStatus = pgEnum("approval_status", [
+  "pending",
+  "approved",
+  "rejected",
+  "modified",
+  "cancelled",
+]);
+export const agentRunStatus = pgEnum("agent_run_status", ["running", "completed", "paused", "failed"]);
+export const messageDirection = pgEnum("message_direction", [
+  "agent_to_seller",
+  "seller_to_agent",
+  "platform",
 ]);
 
 /**
@@ -602,6 +632,277 @@ export const walletLedgerEntries = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// Purchasing: agent runs, purchases, reservations and payments
+// ---------------------------------------------------------------------------
+
+/** One invocation of an engagement's purchasing agent, started by a person. */
+export const agentRuns = pgTable(
+  "agent_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    engagementId: uuid("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "cascade" }),
+    /** Supplied per attempt so a repeated submit does not start a second run. */
+    runKey: text("run_key").notNull().unique(),
+    brain: text("brain").notNull(),
+    status: agentRunStatus("status").notNull().default("running"),
+    summary: text("summary").notNull().default(""),
+    purchasesCompleted: integer("purchases_completed").notNull().default(0),
+    startedBy: uuid("started_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("agent_runs_engagement_idx").on(t.engagementId, t.startedAt),
+    /** At most one run in progress per engagement. */
+    uniqueIndex("agent_runs_one_running_uq")
+      .on(t.engagementId)
+      .where(sql`${t.status} = 'running'`),
+  ],
+);
+
+/**
+ * One request by the agent to buy one service, whatever became of it. Blocked
+ * requests are kept too, so everything the agent tried is on record.
+ */
+export const purchases = pgTable(
+  "purchases",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sequence: bigint("sequence", { mode: "number" }).notNull().generatedAlwaysAsIdentity(),
+    engagementId: uuid("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "restrict" }),
+    agentRunId: uuid("agent_run_id").references(() => agentRuns.id, { onDelete: "set null" }),
+    serviceOfferingId: uuid("service_offering_id")
+      .notNull()
+      .references(() => serviceOfferings.id, { onDelete: "restrict" }),
+    offeringName: text("offering_name").notNull(),
+    quantity: integer("quantity").notNull().default(1),
+    asset: text("asset").notNull(),
+    amountUnits: units("amount_units").notNull(),
+    /** Where the seller asked to be paid. Compared against the mandate before anything is reserved. */
+    recipient: text("recipient").notNull(),
+    /** One key per intended purchase: a repeat of the same request can never charge twice. */
+    idempotencyKey: text("idempotency_key").notNull().unique(),
+    status: purchaseStatus("status").notNull(),
+    blockReason: text("block_reason"),
+    blockMessage: text("block_message"),
+    /** What the seller returned after being paid. */
+    delivery: jsonb("delivery").$type<Record<string, unknown>>(),
+    isSimulated: boolean("is_simulated").notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("purchases_engagement_idx").on(t.engagementId, t.sequence),
+    check("purchases_quantity_positive", sql`${t.quantity} > 0`),
+    check("purchases_amount_positive", sql`${t.amountUnits} > 0`),
+  ],
+);
+
+/**
+ * Spending capacity set aside for one purchase before any payment is tried.
+ * Held and committed reservations both count against the mandate. A database
+ * trigger refuses a reservation that would take the total past the budget or
+ * a single purchase past the per-purchase limit.
+ */
+export const spendingReservations = pgTable(
+  "spending_reservations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    purchaseId: uuid("purchase_id")
+      .notNull()
+      .unique()
+      .references(() => purchases.id, { onDelete: "restrict" }),
+    engagementId: uuid("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "restrict" }),
+    mandateId: uuid("mandate_id")
+      .notNull()
+      .references(() => spendingMandates.id, { onDelete: "restrict" }),
+    amountUnits: units("amount_units").notNull(),
+    status: reservationStatus("status").notNull().default("held"),
+    createdAt: createdAt(),
+    settledAt: timestamp("settled_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("spending_reservations_engagement_idx").on(t.engagementId, t.status),
+    check("spending_reservations_amount_positive", sql`${t.amountUnits} > 0`),
+  ],
+);
+
+/** One try at paying for a purchase. An uncertain outcome is reconciled, never blindly retried. */
+export const paymentAttempts = pgTable(
+  "payment_attempts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    purchaseId: uuid("purchase_id")
+      .notNull()
+      .unique()
+      .references(() => purchases.id, { onDelete: "restrict" }),
+    reservationId: uuid("reservation_id")
+      .notNull()
+      .references(() => spendingReservations.id, { onDelete: "restrict" }),
+    engagementId: uuid("engagement_id").notNull(),
+    engagementWalletId: uuid("engagement_wallet_id").notNull(),
+    rail: paymentRail("rail").notNull(),
+    asset: text("asset").notNull(),
+    amountUnits: units("amount_units").notNull(),
+    recipient: text("recipient").notNull(),
+    provider: text("provider").notNull(),
+    idempotencyKey: text("idempotency_key").notNull().unique(),
+    status: paymentAttemptStatus("status").notNull().default("initiated"),
+    providerRef: text("provider_ref"),
+    failureReason: text("failure_reason"),
+    isSimulated: boolean("is_simulated").notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    /** A payment can only be drawn on the wallet of the engagement it is for, on that wallet's rail. */
+    foreignKey({
+      name: "payment_attempts_wallet_engagement_fk",
+      columns: [t.engagementWalletId, t.engagementId],
+      foreignColumns: [engagementWallets.id, engagementWallets.engagementId],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "payment_attempts_wallet_rail_fk",
+      columns: [t.engagementWalletId, t.rail],
+      foreignColumns: [engagementWallets.id, engagementWallets.rail],
+    }).onDelete("restrict"),
+    index("payment_attempts_engagement_idx").on(t.engagementId, t.createdAt),
+    check("payment_attempts_amount_positive", sql`${t.amountUnits} > 0`),
+  ],
+);
+
+/** A payment the provider has confirmed. Written only after verification. */
+export const paymentTransactions = pgTable(
+  "payment_transactions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sequence: bigint("sequence", { mode: "number" }).notNull().generatedAlwaysAsIdentity(),
+    paymentAttemptId: uuid("payment_attempt_id")
+      .notNull()
+      .unique()
+      .references(() => paymentAttempts.id, { onDelete: "restrict" }),
+    purchaseId: uuid("purchase_id")
+      .notNull()
+      .unique()
+      .references(() => purchases.id, { onDelete: "restrict" }),
+    engagementId: uuid("engagement_id").notNull(),
+    engagementWalletId: uuid("engagement_wallet_id").notNull(),
+    sellerProfileId: uuid("seller_profile_id")
+      .notNull()
+      .references(() => sellerProfiles.id, { onDelete: "restrict" }),
+    rail: paymentRail("rail").notNull(),
+    asset: text("asset").notNull(),
+    amountUnits: units("amount_units").notNull(),
+    recipient: text("recipient").notNull(),
+    provider: text("provider").notNull(),
+    providerRef: text("provider_ref").notNull(),
+    isSimulated: boolean("is_simulated").notNull().default(true),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    foreignKey({
+      name: "payment_transactions_wallet_engagement_fk",
+      columns: [t.engagementWalletId, t.engagementId],
+      foreignColumns: [engagementWallets.id, engagementWallets.engagementId],
+    }).onDelete("restrict"),
+    index("payment_transactions_engagement_idx").on(t.engagementId, t.sequence),
+    unique("payment_transactions_provider_ref_uq").on(t.provider, t.providerRef),
+    check("payment_transactions_amount_positive", sql`${t.amountUnits} > 0`),
+  ],
+);
+
+/**
+ * A request for a person's decision, raised when the agent needs more
+ * authority (budget) or more money in its wallet. It records what the
+ * situation was at the time so the decision is made on the facts.
+ */
+export const approvalRequests = pgTable(
+  "approval_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sequence: bigint("sequence", { mode: "number" }).notNull().generatedAlwaysAsIdentity(),
+    engagementId: uuid("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "cascade" }),
+    kind: approvalKind("kind").notNull(),
+    status: approvalStatus("status").notNull().default("pending"),
+    purchaseId: uuid("purchase_id").references(() => purchases.id, { onDelete: "set null" }),
+    serviceOfferingId: uuid("service_offering_id").references(() => serviceOfferings.id, {
+      onDelete: "set null",
+    }),
+    offeringName: text("offering_name").notNull(),
+    asset: text("asset").notNull(),
+    assetDecimals: integer("asset_decimals").notNull(),
+    proposedAmountUnits: units("proposed_amount_units").notNull(),
+    totalAuthorizedUnits: units("total_authorized_units").notNull(),
+    spentUnits: units("spent_units").notNull(),
+    reservedUnits: units("reserved_units").notNull(),
+    walletBalanceUnits: units("wallet_balance_units").notNull(),
+    /** How much more budget, or how much more funding, the proposed purchase needs. */
+    shortfallUnits: units("shortfall_units").notNull(),
+    explanation: text("explanation").notNull().default(""),
+    decidedBy: uuid("decided_by").references(() => users.id, { onDelete: "restrict" }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decisionNote: text("decision_note").notNull().default(""),
+    /** The new total budget, when a budget increase was approved. */
+    approvedTotalUnits: units("approved_total_units"),
+    /** The permitted service the buyer chose instead, when the proposal was modified. */
+    replacementOfferingId: uuid("replacement_offering_id").references(() => serviceOfferings.id, {
+      onDelete: "set null",
+    }),
+    replacementUsedAt: timestamp("replacement_used_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("approval_requests_engagement_idx").on(t.engagementId, t.sequence),
+    /** One open question per engagement at a time. */
+    uniqueIndex("approval_requests_one_pending_uq")
+      .on(t.engagementId)
+      .where(sql`${t.status} = 'pending'`),
+  ],
+);
+
+/**
+ * Everything exchanged between an engagement's agent and its seller, plus the
+ * platform's own notes. A database trigger refuses an agent or seller message
+ * unless the engagement is ACTIVE and the seller is the one selected for it.
+ */
+export const agentMessages = pgTable(
+  "agent_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sequence: bigint("sequence", { mode: "number" }).notNull().generatedAlwaysAsIdentity(),
+    engagementId: uuid("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "cascade" }),
+    agentRunId: uuid("agent_run_id").references(() => agentRuns.id, { onDelete: "set null" }),
+    sellerProfileId: uuid("seller_profile_id").references(() => sellerProfiles.id, {
+      onDelete: "restrict",
+    }),
+    direction: messageDirection("direction").notNull(),
+    kind: text("kind").notNull(),
+    body: jsonb("body").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("agent_messages_engagement_idx").on(t.engagementId, t.sequence),
+    check(
+      "agent_messages_seller_named",
+      sql`${t.direction} = 'platform' OR ${t.sellerProfileId} IS NOT NULL`,
+    ),
+  ],
+);
+
+// ---------------------------------------------------------------------------
 // Audit
 // ---------------------------------------------------------------------------
 
@@ -646,6 +947,13 @@ export type MasterWalletAccount = typeof masterWalletAccounts.$inferSelect;
 export type EngagementWallet = typeof engagementWallets.$inferSelect;
 export type FundingAuthorization = typeof fundingAuthorizations.$inferSelect;
 export type WalletLedgerEntry = typeof walletLedgerEntries.$inferSelect;
+export type AgentRun = typeof agentRuns.$inferSelect;
+export type Purchase = typeof purchases.$inferSelect;
+export type SpendingReservation = typeof spendingReservations.$inferSelect;
+export type PaymentAttempt = typeof paymentAttempts.$inferSelect;
+export type PaymentTransaction = typeof paymentTransactions.$inferSelect;
+export type ApprovalRequest = typeof approvalRequests.$inferSelect;
+export type AgentMessage = typeof agentMessages.$inferSelect;
 
 export type OrgRole = (typeof orgRole.enumValues)[number];
 export type ListingStatus = (typeof listingStatus.enumValues)[number];
@@ -656,3 +964,7 @@ export type EngagementState = (typeof engagementState.enumValues)[number];
 export type WalletStatus = (typeof walletStatus.enumValues)[number];
 export type MandateStatus = (typeof mandateStatus.enumValues)[number];
 export type AgentStatus = (typeof agentStatus.enumValues)[number];
+export type PurchaseStatus = (typeof purchaseStatus.enumValues)[number];
+export type ApprovalKind = (typeof approvalKind.enumValues)[number];
+export type ApprovalStatus = (typeof approvalStatus.enumValues)[number];
+export type MessageDirection = (typeof messageDirection.enumValues)[number];

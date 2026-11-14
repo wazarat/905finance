@@ -28,6 +28,10 @@ export const PERMISSIONS = {
   "engagement.authorize": ["owner"],
   "engagement.fund": ["owner"],
   "engagement.terminate": ["owner"],
+  /** Start the purchasing agent. It can only act inside the mandate the owner authorized. */
+  "engagement.operate": ["owner", "admin"],
+  /** Decide a budget increase or other approval request. */
+  "engagement.approve": ["owner"],
   "wallet.view": ["owner", "admin", "member"],
   "wallet.manage": ["owner"],
 } as const satisfies Record<string, readonly OrgRole[]>;

@@ -24,6 +24,7 @@ const LEDGER_LABELS = {
   simulated_deposit: "Simulated funds added to master account",
   funding_debit: "Allocated from master account to an engagement",
   funding_credit: "Received by engagement wallet",
+  payment_debit: "Paid to seller from engagement wallet",
 } as const;
 
 async function WalletsContent() {
