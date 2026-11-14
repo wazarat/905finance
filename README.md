@@ -13,7 +13,7 @@ The product is being built in seven milestones, one at a time.
 | # | Milestone | State |
 |---|-----------|-------|
 | 1 | Foundation, authentication and marketplace | **Complete** |
-| 2 | Engagements and wallet architecture | Not started |
+| 2 | Engagements and wallet architecture | **Complete** |
 | 3 | Purchasing agent and human controls | Not started |
 | 4 | Real software testing services | Not started |
 | 5 | Qatom integration | Not started |
@@ -31,9 +31,22 @@ The product is being built in seven milestones, one at a time.
 - Buyer and seller dashboards.
 - An audit trail of sensitive actions.
 
+### What works today (Milestone 2)
+
+- Engagements: a buyer selects a seller for a project, and that selection is saved. An engagement has one seller and one payment rail for life.
+- A backend-enforced state machine: `DISCOVERING → SELLER_SELECTED → AUTHORIZED → WALLET_PROVISIONED → AWAITING_FUNDING → ACTIVE`, with `PAUSED_FOR_APPROVAL`, `COMPLETED`, `CANCELLED`, `EXPIRED` and `FAILED`.
+- Spending mandates: total budget, per-purchase limit, permitted services, testing scope and expiry, drafted freely and then explicitly authorized by the organization's owner.
+- One dedicated wallet per engagement, provisioned through a rail-specific wallet-provider interface.
+- A master account per rail, with funding of an engagement wallet as its own explicit, owner-only authorization. Authorizing a mandate never moves funds.
+- A wallets page showing master accounts and engagement wallets separately for each rail, with a ledger of every balance change.
+- A single gate that decides whether a purchasing agent may contact a seller: only for an ACTIVE engagement, only its selected seller.
+- Cancellation and deadline expiry, both of which end the agent's authority and leave any funds in place.
+
+**Everything involving value in Milestone 2 is simulated.** Wallets are records kept by the platform; no account, chain or asset exists behind them, and they are labelled **Simulated** wherever they appear. The provider interface is real; the provider behind it is a stand-in until the Qatom and GOAT integrations are built.
+
 ### What is deliberately not here yet
 
-No engagements, wallets, funding, payments, agent-to-agent communication or test execution exist in Milestone 1. Where those will appear, the interface says "Not yet active" or "Not connected" rather than showing placeholder numbers. The two seeded sellers are illustrative and are labelled **Sample listing** wherever they appear; they cannot be engaged.
+No purchasing agent runs, no agent-to-agent message is sent, no payment is made and no test executes. Budgets are recorded but nothing can spend against them yet. Unused funds in a closed engagement's wallet are held; returning them is a later, human-authorized step. Where these will appear, the interface says "Not yet active" rather than showing placeholder numbers. The two seeded sellers are illustrative and are labelled **Sample listing** wherever they appear; an engagement with one is a demonstration.
 
 ## Stack
 
@@ -98,11 +111,7 @@ Do **not** set `AUTH_MODE` on Vercel: development sign-in is refused in producti
 
 Environment variables only take effect on the next deployment, so redeploy after adding them.
 
-Production deployments apply pending database migrations during the build (preview deployments and local builds do not). To add the two sample sellers to a hosted database, run the seed once with its connection string:
-
-```bash
-DATABASE_URL="<hosted connection string>" pnpm db:seed
-```
+Production deployments apply pending database migrations during the build and add the two sample sellers if they are missing; an existing listing is never rewritten. Preview deployments and local builds do neither.
 
 If a setting is missing, the server logs which one at startup. Public pages still load; pages that need the missing piece show an error screen or a "not configured" notice instead.
 
@@ -130,7 +139,8 @@ src/app/login, onboarding, logout, api/auth/session
 src/components/        UI primitives (shadcn) and feature components
 src/db/                Drizzle schema, client, migration runner, seed
 src/server/            authentication, permissions, data-access layer, audit
-src/lib/               capability catalog, money helpers, path helpers
+src/server/wallets/    wallet-provider interface and the simulated provider
+src/lib/               capability and rail catalog, state machine, money and unit helpers
 drizzle/               generated SQL migrations
 tests/                 Vitest suites
 ```
@@ -153,9 +163,31 @@ All reads and writes go through the data-access layer in `src/server/`. Every fu
 - Draft, pending and suspended listings are invisible to the public marketplace and profile routes.
 - The edge proxy only redirects signed-out visitors early. It is a convenience, not the security boundary.
 
+### Engagements, mandates and wallets
+
+Activating an engagement takes separate decisions, and no later step is implied by an earlier one:
+
+1. **Select a seller.** A person picks it. Nothing is contacted or created.
+2. **Authorize the mandate** (owner). Locks the budget, permitted services, scope and expiry, and creates the purchasing agent in an inactive state. No funds move.
+3. **Provision the wallet.** The engagement gets its own empty wallet on its rail.
+4. **Authorize funding** (owner). Moves a stated amount from the rail's master account into that wallet. After the mandate, seller, agent and wallet are re-checked, the engagement becomes ACTIVE.
+
+A budget is permission to spend, not money, and a wallet balance is money, not permission. Both will have to cover a purchase.
+
+The rules that matter most are enforced in the database as well as in code, so they hold even if application code is wrong:
+
+- triggers make an engagement's organization, project and seller immutable, fix its rail once authorized, and make terminal states final;
+- a wallet row has a unique engagement id and a trigger that forbids reassigning it, so a wallet belongs to exactly one engagement forever;
+- composite foreign keys guarantee that a wallet is on its engagement's rail, and that a funding record joins a wallet and a master account on the same rail, for the engagement that owns the wallet;
+- balances can never go negative.
+
+Funding uses a per-attempt idempotency key, so a repeated submit cannot fund twice, and a failed transfer is recorded and never retried automatically.
+
+`src/server/wallets/provider.ts` defines the wallet-provider interface. `SimulatedWalletProvider` implements it for both rails today; real providers replace it per rail without touching the engagement logic.
+
 ### Money
 
-Prices are stored as integer minor units with a currency code. User-entered decimals are parsed with integer arithmetic; no monetary value passes through floating point.
+Prices are stored as integer minor units with a currency code. Mandate and wallet amounts are stored exactly in the asset's smallest unit (`numeric(78,0)`, surfaced as `bigint`), wide enough for 18-decimal tokens. User-entered decimals are parsed with integer arithmetic; no monetary value passes through floating point.
 
 ## Tests
 
@@ -173,4 +205,11 @@ The suite runs the real migrations in an in-process Postgres and exercises the d
 - public listing data never containing endpoint addresses or internal identifiers;
 - project rules: explicit testing authorization, the Web3 answer, source validation;
 - session token integrity (tampering, wrong key, unsigned tokens, expiry) and safe post-login redirects;
-- exact integer money handling.
+- exact integer money handling;
+- the engagement state machine: every allowed and forbidden transition, and terminal states being final;
+- the mandate, wallet and funding steps each requiring their own explicit, owner-only action;
+- wallet isolation: a different wallet per engagement, funding one never touching another, and the database refusing a second wallet, a reassigned wallet or a funding record that names another engagement's wallet;
+- rail separation, in code and in the database;
+- funding safety: not above the master balance, once per idempotency key, no overdraw from simultaneous requests, nothing moved on provider failure;
+- the agent gate staying shut in every state but ACTIVE, for every seller but the selected one, and after cancellation or expiry;
+- the seller's organization being unable to see, authorize, fund or cancel a buyer's engagement.

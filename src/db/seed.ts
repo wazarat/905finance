@@ -10,8 +10,8 @@ config({ path: ".env", quiet: true });
 /**
  * Seeds two illustrative seller listings so the marketplace is browsable before
  * any real provider has onboarded. Both are flagged `isSample` and are labelled
- * as samples everywhere they appear. Endpoints use the reserved `.invalid` TLD:
- * nothing is reachable and nothing can be purchased from them.
+ * as samples everywhere they appear. Endpoints use the reserved `.invalid` TLD,
+ * so nothing is reachable at them.
  *
  * Safe to run repeatedly.
  */
@@ -42,7 +42,7 @@ const SAMPLE_SELLERS: SampleSeller[] = [
     displayName: "Relay QA",
     tagline: "Unit, regression and API test runs for conventional software.",
     description:
-      "Relay QA is an illustrative listing for a testing agent that runs a project's existing test suites and reports exactly what executed: tests run, passed, failed, duration and the failing output. It covers unit and regression suites, functional checks of user-facing flows, and contract tests against approved API fixtures.\n\nThis is sample data provided by 905 Finance to show how a seller listing reads. It is not a real provider and cannot be engaged.",
+      "Relay QA is an illustrative listing for a testing agent that runs a project's existing test suites and reports exactly what executed: tests run, passed, failed, duration and the failing output. It covers unit and regression suites, functional checks of user-facing flows, and contract tests against approved API fixtures.\n\nThis is sample data provided by 905 Finance to show how a seller listing reads. It is not a real provider: engagements with it are demonstrations in which no one is contacted and no real funds move.",
     capabilities: [
       "unit_testing",
       "regression_testing",
@@ -93,7 +93,7 @@ const SAMPLE_SELLERS: SampleSeller[] = [
     displayName: "Ledgerproof",
     tagline: "Foundry fuzzing, invariants and static analysis for Solidity.",
     description:
-      "Ledgerproof is an illustrative listing for a smart-contract testing agent. It compiles Solidity projects, runs Forge unit and fuzz tests, executes stateful invariant campaigns and runs Slither static analysis, returning findings with severity, evidence and the commands that produced them.\n\nThis is sample data provided by 905 Finance to show how a Web3-capable listing reads. It is not a real provider and cannot be engaged.",
+      "Ledgerproof is an illustrative listing for a smart-contract testing agent. It compiles Solidity projects, runs Forge unit and fuzz tests, executes stateful invariant campaigns and runs Slither static analysis, returning findings with severity, evidence and the commands that produced them.\n\nThis is sample data provided by 905 Finance to show how a Web3-capable listing reads. It is not a real provider: engagements with it are demonstrations in which no one is contacted and no real funds move.",
     capabilities: [
       "solidity_compilation",
       "foundry_unit",
@@ -142,9 +142,23 @@ const SAMPLE_SELLERS: SampleSeller[] = [
 ];
 
 async function main() {
-  const url = process.env.DATABASE_URL;
+  // `--deploy` is used by the build. It runs only for a Vercel production
+  // deployment with a database, and only adds a sample that is missing: it
+  // never rewrites a listing that already exists.
+  const deploy = process.argv.includes("--deploy");
+  const url = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
+  if (deploy) {
+    if (process.env.VERCEL_ENV !== "production") {
+      console.log("Sample sellers skipped: not a production deployment.");
+      return;
+    }
+    if (!url) {
+      console.warn("Sample sellers skipped: DATABASE_URL is not set for this deployment.");
+      return;
+    }
+  }
   if (!url) throw new Error("DATABASE_URL is not set.");
-  const client = postgres(url, { max: 1 });
+  const client = postgres(url, { max: 1, prepare: false, onnotice: () => undefined });
   const db = drizzle(client, { schema });
 
   try {
@@ -168,6 +182,16 @@ async function main() {
         )[0];
 
       for (const sample of SAMPLE_SELLERS) {
+        if (deploy) {
+          const [existing] = await tx
+            .select({ id: schema.sellerProfiles.id })
+            .from(schema.sellerProfiles)
+            .where(eq(schema.sellerProfiles.slug, sample.slug));
+          if (existing) {
+            console.log(`Sample seller already present: ${sample.displayName}`);
+            continue;
+          }
+        }
         const orgSlug = `sample-${sample.slug}`;
         const [org] = await tx
           .insert(schema.organizations)
@@ -220,16 +244,25 @@ async function main() {
             set: sample.endpoint,
           });
 
-        await tx
-          .delete(schema.serviceOfferings)
+        // Offerings are matched by name so re-seeding keeps their ids, which
+        // existing mandates may refer to.
+        const existingOfferings = await tx
+          .select()
+          .from(schema.serviceOfferings)
           .where(eq(schema.serviceOfferings.sellerProfileId, profile.id));
-        await tx.insert(schema.serviceOfferings).values(
-          sample.offerings.map((offering) => ({
-            sellerProfileId: profile.id,
-            currency: "USD",
-            ...offering,
-          })),
-        );
+        for (const offering of sample.offerings) {
+          const match = existingOfferings.find((o) => o.name === offering.name);
+          if (match) {
+            await tx
+              .update(schema.serviceOfferings)
+              .set({ ...offering, isActive: true })
+              .where(eq(schema.serviceOfferings.id, match.id));
+          } else {
+            await tx
+              .insert(schema.serviceOfferings)
+              .values({ sellerProfileId: profile.id, currency: "USD", ...offering });
+          }
+        }
         console.log(`Seeded sample seller: ${sample.displayName} (/agents/${sample.slug})`);
       }
     });
