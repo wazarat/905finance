@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { safeNextPath } from "@/lib/paths";
 import { createSessionToken, readSessionToken } from "@/server/auth/session";
-import { assertSafeAuthConfiguration, isDevAuthEnabled, sessionSecret } from "@/server/env";
+import {
+  assertSafeAuthConfiguration,
+  isDevAuthEnabled,
+  missingConfiguration,
+  sessionSecret,
+  sessionSecretOrNull,
+} from "@/server/env";
 
 const secret = new TextEncoder().encode("a".repeat(48));
 const otherSecret = new TextEncoder().encode("b".repeat(48));
@@ -61,6 +67,32 @@ describe("auth configuration", () => {
     expect(() => sessionSecret()).toThrow();
     vi.stubEnv("SESSION_SECRET", "x".repeat(32));
     expect(sessionSecret()).toBeInstanceOf(Uint8Array);
+  });
+
+  it("reports a missing or short session secret as absent instead of throwing", () => {
+    vi.stubEnv("SESSION_SECRET", "");
+    expect(sessionSecretOrNull()).toBeNull();
+    vi.stubEnv("SESSION_SECRET", "too-short");
+    expect(sessionSecretOrNull()).toBeNull();
+    vi.stubEnv("SESSION_SECRET", "x".repeat(32));
+    expect(sessionSecretOrNull()).toBeInstanceOf(Uint8Array);
+  });
+
+  it("lists every required setting that is missing, and nothing when all are present", () => {
+    vi.stubEnv("DATABASE_URL", "");
+    vi.stubEnv("SESSION_SECRET", "");
+    vi.stubEnv("NEXT_PUBLIC_PRIVY_APP_ID", "");
+    vi.stubEnv("PRIVY_APP_SECRET", "");
+    const missing = missingConfiguration().join("\n");
+    expect(missing).toContain("DATABASE_URL");
+    expect(missing).toContain("SESSION_SECRET");
+    expect(missing).toContain("PRIVY_APP_SECRET");
+
+    vi.stubEnv("DATABASE_URL", "postgres://user:pass@host/db");
+    vi.stubEnv("SESSION_SECRET", "x".repeat(32));
+    vi.stubEnv("NEXT_PUBLIC_PRIVY_APP_ID", "app-id");
+    vi.stubEnv("PRIVY_APP_SECRET", "app-secret");
+    expect(missingConfiguration()).toEqual([]);
   });
 
   it("enables development sign-in only outside production and only when requested", () => {

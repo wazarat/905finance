@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import type { User } from "@/db/schema";
 import type { Actor } from "../authz";
-import { isProduction, sessionSecret } from "../env";
+import { isProduction, sessionSecret, sessionSecretOrNull } from "../env";
 import {
   SESSION_COOKIE,
   SESSION_TTL_SECONDS,
@@ -15,14 +15,33 @@ import {
   type SessionSource,
 } from "./session";
 
+let warnedAboutMissingSecret = false;
+
 /**
  * The signed-in user for this request, or null. The session cookie is verified
  * and the user is re-read from the database on every request, so a deleted
  * user loses access immediately.
+ *
+ * Visitors without a session cookie are signed out by definition, so nothing
+ * else is consulted for them. If the signing key is not configured, no session
+ * can be valid: every visitor is treated as signed out rather than the page
+ * failing, and the problem is reported in the server log.
  */
 export const getCurrentUser = cache(async (): Promise<User | null> => {
   const store = await cookies();
-  const claims = await readSessionToken(store.get(SESSION_COOKIE)?.value, sessionSecret());
+  const token = store.get(SESSION_COOKIE)?.value;
+  if (!token) return null;
+
+  const secret = sessionSecretOrNull();
+  if (!secret) {
+    if (!warnedAboutMissingSecret) {
+      warnedAboutMissingSecret = true;
+      console.error("SESSION_SECRET is not configured; all visitors are treated as signed out.");
+    }
+    return null;
+  }
+
+  const claims = await readSessionToken(token, secret);
   if (!claims) return null;
   const [user] = await getDb()
     .select()

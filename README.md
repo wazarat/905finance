@@ -81,12 +81,35 @@ Sellers submit listings for activation; they cannot activate their own. Until an
 pnpm seller:activate <slug>
 ```
 
+## Deploying to Vercel
+
+Import the repository in Vercel, then add these in **Project → Settings → Environment Variables** before the first visit:
+
+| Variable | Value |
+|----------|-------|
+| `DATABASE_URL` | A hosted Postgres connection string. Adding Neon from Vercel's **Storage** tab sets this for you. |
+| `SESSION_SECRET` | 32+ random characters (`openssl rand -base64 48`). |
+| `NEXT_PUBLIC_PRIVY_APP_ID`, `PRIVY_APP_SECRET` | From the Privy dashboard. Add your deployment's domain to the Privy app's allowed origins. |
+| `NEXT_PUBLIC_APP_URL` | The deployment's public URL. |
+
+Do **not** set `AUTH_MODE` on Vercel: development sign-in is refused in production.
+
+Environment variables only take effect on the next deployment, so redeploy after adding them.
+
+Production deployments apply pending database migrations during the build (preview deployments and local builds do not). To add the two sample sellers to a hosted database, run the seed once with its connection string:
+
+```bash
+DATABASE_URL="<hosted connection string>" pnpm db:seed
+```
+
+If a setting is missing, the server logs which one at startup. Public pages still load; pages that need the missing piece show an error screen or a "not configured" notice instead.
+
 ## Scripts
 
 | Command | What it does |
 |---------|--------------|
 | `pnpm dev` | Run the app in development |
-| `pnpm build` / `pnpm start` | Production build / serve |
+| `pnpm build` / `pnpm start` | Production build / serve. On a Vercel production deployment the build also applies migrations. |
 | `pnpm lint` | ESLint |
 | `pnpm typecheck` | Generate route types and run the TypeScript compiler |
 | `pnpm test` | Run the test suite |

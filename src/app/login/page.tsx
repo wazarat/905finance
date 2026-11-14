@@ -50,9 +50,8 @@ async function LoginPanel({
         <div role="alert" className="rounded-xl border border-border bg-card p-5">
           <p className="text-sm font-medium text-foreground">Sign-in isn't configured yet</p>
           <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-            Add <code className="figure text-ink-soft">NEXT_PUBLIC_PRIVY_APP_ID</code> and{" "}
-            <code className="figure text-ink-soft">PRIVY_APP_SECRET</code> to the environment, then
-            reload this page.
+            Sign-in opens once the site's authentication settings are in place. You can still
+            browse the marketplace.
           </p>
         </div>
       ) : null}

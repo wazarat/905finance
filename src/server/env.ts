@@ -5,14 +5,22 @@
 
 const MIN_SECRET_LENGTH = 32;
 
-export function sessionSecret(): Uint8Array {
+/** The session signing key, or null when it is missing or too short. */
+export function sessionSecretOrNull(): Uint8Array | null {
   const secret = process.env.SESSION_SECRET;
-  if (!secret || secret.length < MIN_SECRET_LENGTH) {
+  if (!secret || secret.length < MIN_SECRET_LENGTH) return null;
+  return new TextEncoder().encode(secret);
+}
+
+/** The session signing key. Throws when it is not configured: used when issuing sessions. */
+export function sessionSecret(): Uint8Array {
+  const secret = sessionSecretOrNull();
+  if (!secret) {
     throw new Error(
       `SESSION_SECRET must be set to at least ${MIN_SECRET_LENGTH} characters. See .env.example.`,
     );
   }
-  return new TextEncoder().encode(secret);
+  return secret;
 }
 
 export type PrivyServerConfig = { appId: string; appSecret: string };
@@ -43,4 +51,21 @@ export function assertSafeAuthConfiguration(): void {
       "AUTH_MODE=dev is not permitted in production. Remove it and configure Privy credentials.",
     );
   }
+}
+
+/** Required settings that are absent, described for an operator reading the server log. */
+export function missingConfiguration(): string[] {
+  const missing: string[] = [];
+  if (!process.env.DATABASE_URL) {
+    missing.push("DATABASE_URL (PostgreSQL connection string): pages that read data will fail");
+  }
+  if (!sessionSecretOrNull()) {
+    missing.push(
+      `SESSION_SECRET (at least ${MIN_SECRET_LENGTH} random characters): nobody can sign in`,
+    );
+  }
+  if (!privyServerConfig()) {
+    missing.push("NEXT_PUBLIC_PRIVY_APP_ID and PRIVY_APP_SECRET: Privy sign-in is unavailable");
+  }
+  return missing;
 }

@@ -1,5 +1,5 @@
 import "server-only";
-import { isDevAuthEnabled, privyServerConfig } from "../env";
+import { isDevAuthEnabled, privyServerConfig, sessionSecretOrNull } from "../env";
 import { PrivyTokenVerifier, type TokenVerifier } from "./verifier";
 
 let verifier: TokenVerifier | null | undefined;
@@ -19,7 +19,9 @@ export type AuthAvailability = {
   devSignIn: boolean;
 };
 
+/** Which sign-in methods can actually complete. None can without a session signing key. */
 export function getAuthAvailability(): AuthAvailability {
+  if (!sessionSecretOrNull()) return { privyAppId: null, devSignIn: false };
   const config = privyServerConfig();
   return { privyAppId: config?.appId ?? null, devSignIn: isDevAuthEnabled() };
 }
