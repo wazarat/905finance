@@ -6,11 +6,13 @@ import { usePathname } from "next/navigation";
 import {
   Compass,
   FolderGit2,
+  Handshake,
   LayoutDashboard,
   type LucideIcon,
   Settings,
   Store,
   Tags,
+  Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +21,8 @@ type NavItem = { href: string; label: string; icon: LucideIcon; exact?: boolean 
 const BUYING: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/projects", label: "Projects", icon: FolderGit2 },
+  { href: "/engagements", label: "Engagements", icon: Handshake },
+  { href: "/wallets", label: "Wallets", icon: Wallet },
   { href: "/agents", label: "Explore agents", icon: Compass },
 ];
 

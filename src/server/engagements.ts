@@ -901,6 +901,8 @@ export type EngagementDetail = {
     perTransactionLimitUnits: bigint;
     scope: string;
     expiresAt: Date;
+    /** Whole days until the deadline, at least 1. Used to prefill the draft form. */
+    daysUntilExpiry: number;
     authorizedAt: Date | null;
     authorizedRecipient: string | null;
     permittedOfferingIds: string[];
@@ -1039,6 +1041,10 @@ export async function getEngagementDetail(
           perTransactionLimitUnits: mandate.perTransactionLimitUnits,
           scope: mandate.scope,
           expiresAt: mandate.expiresAt,
+          daysUntilExpiry: Math.max(
+            1,
+            Math.round((mandate.expiresAt.getTime() - Date.now()) / DAY_MS),
+          ),
           authorizedAt: mandate.authorizedAt,
           authorizedRecipient: mandate.authorizedRecipient,
           permittedOfferingIds: permitted.map((p) => p.id),

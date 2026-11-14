@@ -28,7 +28,8 @@ function SelectSellerPanel({ slug, isSample }: { slug: string; isSample: boolean
       </Button>
       {isSample ? (
         <p className="mt-3 text-xs leading-relaxed text-warn">
-          This is a sample listing. You can walk through selection, but it cannot be engaged.
+          This is a sample listing. An engagement with it is a demonstration: no provider is
+          contacted and no real funds move.
         </p>
       ) : null}
     </div>

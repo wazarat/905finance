@@ -1,31 +1,27 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import Link from "next/link";
-import { ArrowLeft, Check } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
+import { PageHeader, Panel } from "@/components/app/page-header";
 import { PageSkeleton } from "@/components/app/page-skeleton";
-import { NotYetActive, PageHeader, Panel } from "@/components/app/page-header";
 import { CapabilityChip, SampleBadge } from "@/components/sellers/badges";
 import { Button } from "@/components/ui/button";
+import { railLabel } from "@/lib/capabilities";
 import { formatMoney } from "@/lib/money";
+import { roleHasPermission } from "@/server/authz";
 import { getPublicSellerBySlug } from "@/server/marketplace";
 import { requireWorkspace } from "@/server/page-context";
 import { listProjects } from "@/server/projects";
+import { EnableRoleForm } from "../../enable-role-form";
+import { CreateEngagementForm } from "./create-engagement-form";
 
-export const metadata: Metadata = { title: "Configure engagement" };
-
-const NEXT_STEPS = [
-  "Choose the project and the services the agent may buy",
-  "Set a total budget, a per-purchase limit and an expiry",
-  "Authorize the engagement",
-  "Provision a dedicated wallet and separately approve its funding",
-] as const;
+export const metadata: Metadata = { title: "New engagement" };
 
 /**
- * Lands here from "Select this seller". It confirms the human-made selection
- * and shows what comes next. It creates nothing: no engagement, wallet,
- * payment or agent message exists until engagements are switched on.
+ * Reached from "Select this seller". Confirms the human-made selection and
+ * asks which project it is for. Nothing is contacted, provisioned or spent.
  */
-async function ConfigureEngagementContent({ searchParams }: PageProps<"/engagements/new">) {
+async function NewEngagementContent({ searchParams }: PageProps<"/engagements/new">) {
   const params = await searchParams;
   const slug = Array.isArray(params.seller) ? params.seller[0] : params.seller;
   const { actor, workspace } = await requireWorkspace();
@@ -46,7 +42,25 @@ async function ConfigureEngagementContent({ searchParams }: PageProps<"/engageme
     );
   }
 
-  const projects = workspace.buyerProfile ? await listProjects(actor, workspace.organization.id) : [];
+  if (!workspace.buyerProfile) {
+    return (
+      <div className="space-y-8">
+        <PageHeader
+          eyebrow="Engagement"
+          title="Enable buying to hire an agent"
+          description={`Your organization currently only sells. Add the buyer role to engage ${seller.displayName}.`}
+        />
+        {workspace.role === "owner" ? (
+          <EnableRoleForm role="buyer" label="Enable buying" />
+        ) : (
+          <p className="text-sm text-muted-foreground">Ask your organization&apos;s owner to enable buying.</p>
+        )}
+      </div>
+    );
+  }
+
+  const projects = await listProjects(actor, workspace.organization.id);
+  const canDraft = roleHasPermission(workspace.role, "engagement.draft");
 
   return (
     <div className="space-y-8">
@@ -60,7 +74,7 @@ async function ConfigureEngagementContent({ searchParams }: PageProps<"/engageme
 
       <PageHeader
         eyebrow="Engagement"
-        title="Configure engagement"
+        title="New engagement"
         description="You've selected a seller. Nothing has been sent to it and nothing has been spent."
       />
 
@@ -77,6 +91,11 @@ async function ConfigureEngagementContent({ searchParams }: PageProps<"/engageme
                 <CapabilityChip key={capability} capability={capability} />
               ))}
             </div>
+            <p className="text-xs text-muted-foreground">
+              {seller.intendedRails.length > 0
+                ? `Accepts ${seller.intendedRails.map(railLabel).join(" and ")}`
+                : "Has not declared a payment rail"}
+            </p>
           </div>
           <div className="shrink-0 sm:text-right">
             <p className="eyebrow">Services from</p>
@@ -89,52 +108,34 @@ async function ConfigureEngagementContent({ searchParams }: PageProps<"/engageme
         </div>
       </Panel>
 
-      <Panel title="Project" description="The software this engagement would cover.">
+      <Panel title="Project" description="The software this engagement covers.">
         {projects.length === 0 ? (
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              You don't have a project yet. Create one so it's ready to attach.
+              You don&apos;t have a project yet. Create one, then come back to this seller.
             </p>
             <Button asChild variant="outline" size="lg" className="h-10 px-4">
               <Link href="/projects/new">New project</Link>
             </Button>
           </div>
+        ) : canDraft ? (
+          <CreateEngagementForm
+            sellerSlug={seller.slug}
+            sellerName={seller.displayName}
+            projects={projects.map((p) => ({ id: p.id, name: p.name, hasWeb3: p.hasWeb3 }))}
+          />
         ) : (
-          <ul className="-my-2 divide-y divide-border">
-            {projects.map((project) => (
-              <li key={project.id} className="flex items-center justify-between gap-4 py-3">
-                <span className="truncate text-sm text-foreground">{project.name}</span>
-                <span className="text-xs text-muted-foreground">
-                  {project.hasWeb3 ? "Includes Web3" : "Conventional"}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <p className="text-sm text-muted-foreground">Owners and admins can create engagements.</p>
         )}
-      </Panel>
-
-      <Panel title="Scope, budget and authorization" action={<NotYetActive />}>
-        <p className="max-w-2xl text-sm leading-relaxed text-ink-soft">
-          Engagement setup isn't switched on yet, so this selection isn't saved and no agent has
-          been activated. When it is, you'll complete these steps here:
-        </p>
-        <ol className="mt-4 space-y-2.5">
-          {NEXT_STEPS.map((step) => (
-            <li key={step} className="flex items-start gap-2.5 text-sm text-muted-foreground">
-              <Check className="mt-0.5 size-4 shrink-0 text-muted-foreground/60" aria-hidden="true" />
-              {step}
-            </li>
-          ))}
-        </ol>
       </Panel>
     </div>
   );
 }
 
-export default function ConfigureEngagementPage(props: PageProps<"/engagements/new">) {
+export default function NewEngagementPage(props: PageProps<"/engagements/new">) {
   return (
     <Suspense fallback={<PageSkeleton />}>
-      <ConfigureEngagementContent {...props} />
+      <NewEngagementContent {...props} />
     </Suspense>
   );
 }
