@@ -54,6 +54,7 @@ const {
 
 export type BlockReason =
   | "engagement_not_active"
+  | "payment_unresolved"
   | "wrong_seller"
   | "recipient_not_authorized"
   | "service_not_permitted"
@@ -260,6 +261,24 @@ async function prepare(request: PurchaseRequest): Promise<Prepared> {
       return (await block("engagement_not_active", reason, request.quote.amountUnits, quotedAsset)).prepared;
     }
     const asset = { code: mandate.asset, decimals: mandate.assetDecimals };
+
+    // While an earlier payment's outcome is unknown, nothing more is bought.
+    // Buying the same thing again could pay for it twice.
+    const [unresolved] = await tx
+      .select({ id: purchases.id })
+      .from(purchases)
+      .where(and(eq(purchases.engagementId, engagement.id), eq(purchases.status, "needs_reconciliation")))
+      .limit(1);
+    if (unresolved) {
+      return (
+        await block(
+          "payment_unresolved",
+          "An earlier payment's outcome is still unknown. It has to be reconciled before anything else is bought.",
+          request.quote.amountUnits,
+          quotedAsset,
+        )
+      ).prepared;
+    }
 
     // 2. The seller is the one selected for this engagement.
     if (

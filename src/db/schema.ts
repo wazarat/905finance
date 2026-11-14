@@ -87,6 +87,8 @@ export const ledgerEntryKind = pgEnum("ledger_entry_kind", [
   "funding_debit",
   "funding_credit",
   "payment_debit",
+  "return_debit",
+  "return_credit",
 ]);
 export const purchaseStatus = pgEnum("purchase_status", [
   "blocked",
@@ -649,6 +651,50 @@ export const fundingAuthorizations = pgTable(
       .on(t.providerRef)
       .where(sql`${t.isSimulated} = false AND ${t.providerRef} IS NOT NULL`),
     check("funding_authorizations_amount_positive", sql`${t.amountUnits} > 0`),
+  ],
+);
+
+/**
+ * A person's authorization to send an ended engagement's unused funds back
+ * to the account they came from. Funds never move between engagements, and
+ * never move at all without this.
+ */
+export const fundReturns = pgTable(
+  "fund_returns",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    engagementId: uuid("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "restrict" }),
+    engagementWalletId: uuid("engagement_wallet_id")
+      .notNull()
+      .references(() => engagementWallets.id, { onDelete: "restrict" }),
+    masterWalletAccountId: uuid("master_wallet_account_id")
+      .notNull()
+      .references(() => masterWalletAccounts.id, { onDelete: "restrict" }),
+    asset: text("asset").notNull(),
+    amountUnits: units("amount_units").notNull(),
+    /** authorized, sent, executed, failed, uncertain. */
+    status: text("status").notNull().default("authorized"),
+    idempotencyKey: text("idempotency_key").notNull().unique(),
+    /** For a real return: the transaction hash, saved before waiting on it. */
+    providerRef: text("provider_ref"),
+    failureReason: text("failure_reason"),
+    isSimulated: boolean("is_simulated").notNull().default(true),
+    authorizedBy: uuid("authorized_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    authorizedAt: timestamp("authorized_at", { withTimezone: true }).notNull().defaultNow(),
+    executedAt: timestamp("executed_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("fund_returns_engagement_idx").on(t.engagementId, t.authorizedAt),
+    // At most one return in flight or completed per engagement: a second can
+    // only be authorized after the first is known to have failed.
+    uniqueIndex("fund_returns_one_live_uq")
+      .on(t.engagementId)
+      .where(sql`${t.status} <> 'failed'`),
+    check("fund_returns_amount_positive", sql`${t.amountUnits} > 0`),
   ],
 );
 
@@ -1246,6 +1292,7 @@ export type ApprovalRequest = typeof approvalRequests.$inferSelect;
 export type AgentMessage = typeof agentMessages.$inferSelect;
 export type QatomConnection = typeof qatomConnections.$inferSelect;
 export type SellerIdentity = typeof sellerIdentities.$inferSelect;
+export type FundReturn = typeof fundReturns.$inferSelect;
 export type GoatFlowOrder = typeof goatFlowOrders.$inferSelect;
 export type Settlement = "simulated" | "goat_testnet3";
 export type TestingJob = typeof testingJobs.$inferSelect;

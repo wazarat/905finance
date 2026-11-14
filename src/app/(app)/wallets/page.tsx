@@ -26,6 +26,8 @@ const LEDGER_LABELS = {
   funding_debit: "Allocated from master account to an engagement",
   funding_credit: "Received by engagement wallet",
   payment_debit: "Paid to seller from engagement wallet",
+  return_debit: "Unused funds returned from an ended engagement",
+  return_credit: "Unused funds received back in the master account",
 } as const;
 
 async function WalletsContent() {

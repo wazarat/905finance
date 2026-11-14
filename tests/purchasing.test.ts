@@ -767,8 +767,10 @@ describe("when a payment does not clearly succeed", () => {
     expect(again).toMatchObject({ status: "needs_reconciliation", replayed: true });
     expect(silent.calls).toBe(1);
 
+    // Until that payment is settled, nothing else is bought.
     setPaymentProvider("goat", undefined);
-    expect(await buy(id, alpha, 25)).toMatchObject({ status: "blocked", reason: "budget_exceeded" });
+    expect(await buy(id, alpha, 25)).toMatchObject({ status: "blocked", reason: "payment_unresolved" });
+    expect(await getBudgetStatus(db, id)).toMatchObject({ spentUnits: 0n, reservedUnits: 2500n });
   });
 
   it("does not record success for a payment it cannot verify", async () => {

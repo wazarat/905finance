@@ -78,6 +78,13 @@
       "when": 1794695488336,
       "tag": "0010_settlement_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794696798408,
+      "tag": "0011_colossal_callisto",
+      "breakpoints": true
     }
   ]
 }

@@ -12,6 +12,7 @@ import {
   Handshake,
   LayoutDashboard,
   type LucideIcon,
+  ScrollText,
   Settings,
   Store,
   Tags,
@@ -37,7 +38,10 @@ const SELLING: NavItem[] = [
   { href: "/seller/listing", label: "Listing", icon: Tags },
 ];
 
-const ACCOUNT: NavItem[] = [{ href: "/settings", label: "Settings", icon: Settings }];
+const ACCOUNT: NavItem[] = [
+  { href: "/audit", label: "Activity log", icon: ScrollText },
+  { href: "/settings", label: "Settings", icon: Settings },
+];
 
 function isActive(pathname: string, item: NavItem): boolean {
   if (item.exact) return pathname === item.href;

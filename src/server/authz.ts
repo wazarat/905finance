@@ -34,6 +34,8 @@ export const PERMISSIONS = {
   "engagement.approve": ["owner"],
   "wallet.view": ["owner", "admin", "member"],
   "wallet.manage": ["owner"],
+  /** Read the organization's record of sensitive actions. */
+  "audit.view": ["owner", "admin"],
   "qatom.view": ["owner", "admin", "member"],
   /** Link or unlink the organization's Qatom account. Linking lets its agents send messages through Qatom. */
   "qatom.manage": ["owner"],

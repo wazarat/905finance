@@ -13,9 +13,12 @@ import { Button } from "@/components/ui/button";
 import { capabilityLabel, getFixture, railLabel } from "@/lib/capabilities";
 import { FINDING_CATEGORY_LABELS, JOB_STATUS_LABELS, formatDuration, toolLabel } from "@/lib/testing";
 import { formatUnits } from "@/lib/units";
+import { roleHasPermission } from "@/server/authz";
 import { isAppError } from "@/server/errors";
 import { requireWorkspace } from "@/server/page-context";
 import { getTestingReport, type TestingReport } from "@/server/testing/reports";
+
+import { RequeueJobForm } from "./requeue-form";
 
 export const metadata: Metadata = { title: "Test report" };
 
@@ -50,7 +53,8 @@ function headline(report: TestingReport): string {
 
 async function ReportContent({ params }: { params: Promise<{ jobId: string }> }) {
   const { jobId } = await params;
-  const { actor } = await requireWorkspace();
+  const { actor, workspace } = await requireWorkspace();
+  const canOperate = roleHasPermission(workspace.role, "engagement.operate");
   let report: TestingReport;
   try {
     report = await getTestingReport(actor, jobId);
@@ -93,6 +97,23 @@ async function ReportContent({ params }: { params: Promise<{ jobId: string }> })
           </>
         }
       />
+
+      {report.status === "failed" ? (
+        <div className="rounded-xl border border-warn/30 bg-warn-dim p-5">
+          <p className="font-medium text-foreground">This test was paid for and did not run</p>
+          <p className="mt-1 max-w-2xl text-sm leading-relaxed text-ink-soft">
+            Nothing was delivered for this purchase. You can run it again at no charge: no new purchase
+            is made and no payment is touched.
+          </p>
+          <div className="mt-4">
+            {canOperate ? (
+              <RequeueJobForm jobId={report.id} />
+            ) : (
+              <p className="text-sm text-muted-foreground">Owners and admins can run it again.</p>
+            )}
+          </div>
+        </div>
+      ) : null}
 
       {result ? (
         <section aria-label="Test counts" className="grid grid-cols-2 gap-4 lg:grid-cols-4">

@@ -229,7 +229,7 @@ export type LedgerLine = {
   id: string;
   rail: PaymentRail;
   asset: AssetInfo;
-  kind: "simulated_deposit" | "funding_debit" | "funding_credit" | "payment_debit";
+  kind: "simulated_deposit" | "funding_debit" | "funding_credit" | "payment_debit" | "return_debit" | "return_credit";
   account: "master" | "engagement";
   deltaUnits: bigint;
   balanceAfterUnits: bigint;

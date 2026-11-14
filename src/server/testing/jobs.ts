@@ -5,6 +5,8 @@ import { getDb, schema, type DbOrTx } from "@/db/client";
 import type { Project, TestingJob } from "@/db/schema";
 import { getCapability } from "@/lib/capabilities";
 import { CAPABILITY_TOOLS, SEVERITIES, describeResult } from "@/lib/testing";
+import { recordAudit } from "../audit";
+import { assertAuthenticated, requirePermissionOnRecord, type Actor } from "../authz";
 import { conflict, invalid, notFound } from "../errors";
 
 const { testingJobs, testingResults, findings, testingWorkers, purchases, engagements, projects, serviceOfferings, agentMessages } =
@@ -407,5 +409,68 @@ export async function submitTestingResult(jobId: string, raw: unknown): Promise<
       body: { jobId: job.id, purchaseId: job.purchaseId, message: summary },
     });
     return { jobId: job.id, status, replayed: false };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Recovery
+// ---------------------------------------------------------------------------
+
+/**
+ * Put a test that could not run back in the queue. It was paid for and
+ * nothing was delivered, so running it again costs the buyer nothing and
+ * charges nothing: no purchase is made and no payment is touched. A test that
+ * ran to completion, whatever it found, cannot be run again this way.
+ */
+export async function requeueTestingJob(actor: Actor | null, jobId: string): Promise<TestingJob> {
+  assertAuthenticated(actor);
+  if (!uuid.safeParse(jobId).success) throw notFound("Job");
+  return getDb().transaction(async (tx) => {
+    const [job] = await tx.select().from(testingJobs).where(eq(testingJobs.id, jobId)).for("update");
+    const [engagement] = job
+      ? await tx.select().from(engagements).where(eq(engagements.id, job.engagementId))
+      : [];
+    await requirePermissionOnRecord(actor, engagement, "engagement.operate", "Job", tx);
+    if (job.status !== "failed") {
+      throw conflict("Only a test that could not run can be run again.");
+    }
+    const [purchase] = await tx.select().from(purchases).where(eq(purchases.id, job.purchaseId));
+    if (purchase.status !== "paid") throw conflict("This purchase is not waiting on a test.");
+    const [project] = await tx.select().from(projects).where(eq(projects.id, job.projectId));
+    const blocker = await fulfilmentBlocker(project, job.capability, tx);
+    if (blocker) throw conflict(blocker);
+
+    // The failed attempt's report is replaced by the next one; what it said is kept in the audit record.
+    const [previous] = await tx.select().from(testingResults).where(eq(testingResults.jobId, job.id));
+    await tx.delete(testingResults).where(eq(testingResults.jobId, job.id));
+    const [queued] = await tx
+      .update(testingJobs)
+      .set({
+        status: "queued",
+        attempts: 0,
+        claimedBy: null,
+        claimedAt: null,
+        leaseExpiresAt: null,
+        finishedAt: null,
+        failureReason: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(testingJobs.id, job.id))
+      .returning();
+    await recordAudit(
+      {
+        actorUserId: actor.userId,
+        organizationId: engagement.organizationId,
+        action: "testing_job.requeued",
+        entityType: "testing_job",
+        entityId: job.id,
+        metadata: {
+          purchaseId: job.purchaseId,
+          previousFailure: job.failureReason ?? previous?.errorMessage ?? null,
+        },
+      },
+      tx,
+    );
+    return queued;
   });
 }

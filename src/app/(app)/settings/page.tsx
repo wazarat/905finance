@@ -10,6 +10,7 @@ import { requireWorkspace } from "@/server/page-context";
 import { ChainLink } from "@/components/goat/chain-link";
 import { goatLiveConfig } from "@/server/goat/live";
 import { getQatomStatus } from "@/server/qatom/connection";
+import { getIntegrationStatus } from "@/server/status";
 import { EnableRoleForm } from "../enable-role-form";
 import { ConnectQatomForm, DisconnectQatomForm } from "./qatom-forms";
 
@@ -23,6 +24,14 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
     </div>
   );
 }
+
+const STATE_LABELS = { live: "Live", partial: "Partly set up", simulated: "Simulated", off: "Off" } as const;
+const STATE_TONE = {
+  live: "text-brand",
+  partial: "text-warn",
+  simulated: "text-warn",
+  off: "text-destructive",
+} as const;
 
 const NOTICES: Record<string, string> = {
   connected: "Qatom account linked.",
@@ -38,6 +47,7 @@ async function SettingsContent({ searchParams }: { searchParams: Promise<Record<
   // Linking Qatom is for organizations that buy: it carries their agents' messages.
   const qatom = workspace.buyerProfile ? await getQatomStatus(actor, workspace.organization.id) : null;
   const goat = goatLiveConfig();
+  const status = await getIntegrationStatus(actor, workspace.organization.id);
 
   return (
     <div className="space-y-8">
@@ -96,6 +106,32 @@ async function SettingsContent({ searchParams }: { searchParams: Promise<Record<
             )}
           </div>
         </div>
+      </Panel>
+
+      <Panel
+        title="What is connected"
+        description="What each outside system is really doing in this deployment. Nothing here is assumed."
+      >
+        <ul className="-my-4 divide-y divide-border">
+          {status.map((line) => (
+            <li key={line.name} className="grid gap-2 py-4 sm:grid-cols-[11rem_minmax(0,1fr)] sm:gap-4">
+              <div>
+                <p className="text-sm font-medium text-foreground">{line.name}</p>
+                <p className="text-xs text-muted-foreground">{line.role}</p>
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm text-ink-soft">
+                  <span className={STATE_TONE[line.state]}>{STATE_LABELS[line.state]}.</span> {line.summary}
+                </p>
+                {line.missing.length > 0 ? (
+                  <p className="figure mt-1 text-xs break-words text-muted-foreground">
+                    Still needed: {line.missing.join("; ")}
+                  </p>
+                ) : null}
+              </div>
+            </li>
+          ))}
+        </ul>
       </Panel>
 
       {qatom ? (

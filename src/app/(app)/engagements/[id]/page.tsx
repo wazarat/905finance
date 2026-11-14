@@ -38,6 +38,7 @@ import {
   type EngagementDetail,
   type WalletChainState,
 } from "@/server/engagements";
+import { getEngagementStatement } from "@/server/closure";
 import { isAppError } from "@/server/errors";
 import { requireWorkspace } from "@/server/page-context";
 import {
@@ -51,6 +52,9 @@ import {
   AuthorizeEngagementForm,
   CancelEngagementForm,
   ChainFundingForm,
+  CheckReturnForm,
+  CompleteEngagementForm,
+  ReturnFundsForm,
   FundingForm,
   MandateForm,
   ProvisionWalletForm,
@@ -79,6 +83,14 @@ function NetworkRoles() {
     </dl>
   );
 }
+
+const RETURN_LABELS: Record<string, string> = {
+  authorized: "Authorized",
+  sent: "Sent · awaiting confirmation",
+  executed: "Returned",
+  failed: "Not returned",
+  uncertain: "Outcome unknown · not re-sent",
+};
 
 /** Marks a wallet or payment that is on GOAT Testnet3 rather than simulated. */
 function NetworkBadge() {
@@ -269,6 +281,7 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
   const activity = await getEngagementActivity(actor, id);
   const { engagement, seller, project, mandate, wallet, can } = detail;
   const chain = wallet && !wallet.isSimulated ? await getWalletChainState(actor, id) : null;
+  const statement = wallet ? await getEngagementStatement(actor, id) : null;
   const state = engagement.state;
   const ended = isTerminal(state);
 
@@ -352,7 +365,7 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
           <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
             Nothing further can be purchased under it.
             {wallet && wallet.balanceUnits > 0n
-              ? ` ${formatUnits(wallet.balanceUnits, wallet.asset)} remains in its wallet. Unused funds are returned only when you authorize it; that step is not yet active.`
+              ? ` ${formatUnits(wallet.balanceUnits, wallet.asset)} remains in its wallet. It stays there until you authorize its return, in the final financial record below.`
               : ""}
           </p>
         </div>
@@ -598,12 +611,128 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
         </ol>
       </Panel>
 
+      {statement && (ended || statement.fundedUnits > 0n) ? (
+        <Panel
+          title={ended ? "Final financial record" : "Financial record so far"}
+          description="From the platform's own books: what was authorized in, what was paid out, and what is left."
+          action={
+            <Button asChild variant="ghost" size="lg" className="h-9 px-3">
+              <a href={`/engagements/${engagement.id}/statement`} download>
+                Download
+              </a>
+            </Button>
+          }
+        >
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-5 lg:grid-cols-4">
+            {(
+              [
+                ["Funded", statement.fundedUnits],
+                ["Paid to seller", statement.spentUnits],
+                ["Returned to you", statement.returnedUnits],
+                ["Still in wallet", statement.heldUnits],
+              ] as const
+            ).map(([label, value]) => (
+              <div key={label}>
+                <dt className="eyebrow">{label}</dt>
+                <dd className="figure mt-1 text-base whitespace-nowrap text-foreground">
+                  {formatUnits(value, statement.asset)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          <p className={`mt-4 text-sm ${statement.reconciles ? "text-muted-foreground" : "text-warn"}`}>
+            {statement.reconciles
+              ? "The figures reconcile: funded equals paid, returned and held."
+              : "The figures do not reconcile. This needs looking at before anything else is done."}
+            {statement.isSimulated ? " All of it is simulated." : " Real test assets on GOAT Testnet3."}
+          </p>
+          {statement.unresolved > 0 ? (
+            <p className="mt-2 text-sm text-warn">
+              {statement.unresolved} {statement.unresolved === 1 ? "payment has" : "payments have"} an
+              outcome that is not settled yet. Reconcile under Purchases above.
+            </p>
+          ) : null}
+
+          {statement.returns.length > 0 ? (
+            <ul className="mt-5 divide-y divide-border border-t border-border">
+              {statement.returns.map((entry) => (
+                <li key={entry.id} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-3 text-sm">
+                  <span>
+                    <span className="figure text-foreground">{formatUnits(entry.amountUnits, statement.asset)}</span>{" "}
+                    <span className="text-muted-foreground">· {dateTimeFormat.format(entry.at)}</span>
+                    {entry.reference ? (
+                      <ChainLink value={entry.reference} short className="ml-2 text-xs text-muted-foreground" />
+                    ) : null}
+                    {entry.note ? <span className="mt-0.5 block text-xs text-muted-foreground">{entry.note}</span> : null}
+                  </span>
+                  <span
+                    className={
+                      entry.status === "executed"
+                        ? "text-brand"
+                        : entry.status === "failed"
+                          ? "text-destructive"
+                          : "text-warn"
+                    }
+                  >
+                    {RETURN_LABELS[entry.status] ?? entry.status}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          {ended && statement.heldUnits > 0n ? (
+            <div className="mt-5 border-t border-border pt-5">
+              <p className="text-sm font-medium text-foreground">Unused funds</p>
+              {!can.fund ? (
+                <div className="mt-2">
+                  <OwnerOnly what="return unused funds" />
+                </div>
+              ) : statement.canReturn ? (
+                <div className="mt-3">
+                  <ReturnFundsForm
+                    key={statement.returns.length}
+                    engagementId={engagement.id}
+                    idempotencyKey={randomUUID()}
+                    amountLabel={formatUnits(statement.heldUnits, statement.asset)}
+                    destination={
+                      statement.isSimulated
+                        ? "your simulated master account"
+                        : `your funding wallet ${detail.fundingWallet ?? ""}`
+                    }
+                  />
+                </div>
+              ) : (
+                <div className="mt-2 space-y-3">
+                  <p className="text-sm text-ink-soft">{statement.returnBlockedBy}</p>
+                  {statement.returns.some((entry) => entry.status === "sent") ? (
+                    <CheckReturnForm engagementId={engagement.id} />
+                  ) : null}
+                </div>
+              )}
+              <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+                Funds are never moved to another engagement, and never returned without your
+                authorization.
+              </p>
+            </div>
+          ) : null}
+        </Panel>
+      ) : null}
+
       {!ended ? (
-        <Panel title="Cancel engagement" description="Ends the agent's authority immediately. Final.">
+        <Panel
+          title="End engagement"
+          description="Either ends the agent's authority immediately and is final. Unused funds stay put until you return them."
+        >
           {can.terminate ? (
-            <CancelEngagementForm engagementId={engagement.id} />
+            <div className="flex flex-wrap items-start gap-4">
+              {state === "ACTIVE" || state === "PAUSED_FOR_APPROVAL" ? (
+                <CompleteEngagementForm engagementId={engagement.id} />
+              ) : null}
+              <CancelEngagementForm engagementId={engagement.id} />
+            </div>
           ) : (
-            <OwnerOnly what="cancel an engagement" />
+            <OwnerOnly what="end an engagement" />
           )}
         </Panel>
       ) : null}

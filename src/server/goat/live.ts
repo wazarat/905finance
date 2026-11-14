@@ -27,7 +27,7 @@ const FLOW_TESTNET_HOST = "flow-api.testnet3.goat.network";
 export function goatLiveGaps(): string[] {
   const env = process.env;
   const gaps: string[] = [];
-  if (env.GOAT_SETTLEMENT !== "testnet3") gaps.push('GOAT_SETTLEMENT is not "testnet3"');
+  if (env.GOAT_SETTLEMENT !== "testnet3") gaps.push('GOAT_SETTLEMENT set to "testnet3"');
   if (!isEvmAddress(env.GOAT_USD_TOKEN_ADDRESS)) gaps.push("GOAT_USD_TOKEN_ADDRESS (the USD token contract)");
   if (!/^[A-Za-z0-9.]{1,12}$/.test(env.GOAT_USD_TOKEN_SYMBOL ?? "")) gaps.push("GOAT_USD_TOKEN_SYMBOL");
   if (!/^(?:[0-9]|1[0-8])$/.test(env.GOAT_USD_TOKEN_DECIMALS ?? "")) gaps.push("GOAT_USD_TOKEN_DECIMALS");

@@ -19,6 +19,7 @@ import type { AgentBrain } from "@/server/agent/brain";
 import { runAgent } from "@/server/agent/runtime";
 import type { Actor } from "@/server/authz";
 import { getBudgetStatus } from "@/server/budget";
+import { checkFundReturn, getEngagementStatement, returnUnusedFunds } from "@/server/closure";
 import {
   authorizeEngagement,
   authorizeFunding,
@@ -738,5 +739,128 @@ describe("a real payment", () => {
     expect(await getBudgetStatus(db, real.id)).toMatchObject({ spentUnits: 0n });
     // It can still be ended.
     expect((await cancelEngagement(acme.owner, real.id)).state).toBe("CANCELLED");
+  });
+});
+
+describe("returning real unused funds", () => {
+  const giveBack = (id: string, actor: Actor | null = acme.owner) =>
+    returnUnusedFunds(actor, id, { idempotencyKey: randomUUID(), confirmed: true });
+  /** A real engagement that was funded with $25, spent nothing, and was ended. */
+  async function ended() {
+    const made = await active();
+    await cancelEngagement(acme.owner, made.id);
+    return made;
+  }
+
+  it("sends what is left back to the buyer's own funding wallet, confirmed from the chain", async () => {
+    const { id, wallet } = await active();
+    await run(acme, id);
+    await cancelEngagement(acme.owner, id);
+    // Ending an engagement moves nothing by itself.
+    expect(chain.token.get(wallet)).toBe(15n * ONE);
+    expect(await walletOf(id)).toMatchObject({ status: "closing", balanceUnits: 15n * ONE });
+    await expect(giveBack(id, globex.owner)).rejects.toMatchObject({ code: "not_found" });
+    await expect(giveBack(id, null)).rejects.toMatchObject({ code: "unauthenticated" });
+
+    const buyerBefore = chain.token.get(BUYER_WALLET)!;
+    const key = randomUUID();
+    const returned = await returnUnusedFunds(acme.owner, id, { idempotencyKey: key, confirmed: true });
+    expect(returned).toMatchObject({ status: "executed", amountUnits: 15n * ONE, isSimulated: false });
+    expect(returned.providerRef).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(signer.sent.at(-1)).toMatchObject({ from: wallet, to: BUYER_WALLET, token: TOKEN, amountUnits: 15n * ONE });
+    expect(chain.token.get(wallet)).toBe(0n);
+    expect(chain.token.get(BUYER_WALLET)).toBe(buyerBefore + 15n * ONE);
+    expect(await walletOf(id)).toMatchObject({ status: "closed", balanceUnits: 0n });
+
+    // Asked again, it answers with the same record and sends nothing more.
+    const sends = signer.sent.length;
+    expect((await returnUnusedFunds(acme.owner, id, { idempotencyKey: key, confirmed: true })).id).toBe(returned.id);
+    await expect(giveBack(id)).rejects.toMatchObject({ code: "conflict" });
+    expect(signer.sent).toHaveLength(sends);
+
+    expect((await getEngagementStatement(acme.owner, id))!).toMatchObject({
+      isSimulated: false,
+      fundedUnits: 25n * ONE,
+      spentUnits: 10n * ONE,
+      returnedUnits: 15n * ONE,
+      heldUnits: 0n,
+      reconciles: true,
+    });
+    // The funding wallet is the buyer's own: the platform keeps no balance for it.
+    const masters = await db.select().from(schema.masterWalletAccounts).where(eq(schema.masterWalletAccounts.organizationId, acme.org));
+    expect(masters.find((m) => !m.isSimulated)).toMatchObject({ providerRef: BUYER_WALLET, balanceUnits: 0n });
+  });
+
+  it("sends nothing when the wallet cannot pay the fee or the chain cannot be read, and can be tried again", async () => {
+    const { id, wallet } = await ended();
+    chain.gas.set(wallet, 0n);
+    const noGas = await giveBack(id);
+    expect(noGas).toMatchObject({ status: "failed" });
+    expect(noGas.failureReason).toContain("network fee");
+
+    chain.gas.set(wallet, 10n ** 15n);
+    chain.down = true;
+    expect(await giveBack(id)).toMatchObject({ status: "failed" });
+    expect(signer.sent).toEqual([]);
+    expect(await walletOf(id)).toMatchObject({ status: "closing", balanceUnits: 25n * ONE });
+
+    chain.down = false;
+    expect(await giveBack(id)).toMatchObject({ status: "executed", amountUnits: 25n * ONE });
+    expect(signer.sent).toHaveLength(1);
+  });
+
+  it("does not send again when it cannot tell whether the transfer went out", async () => {
+    const { id, wallet } = await ended();
+    signer.mode = "throws";
+    expect(await giveBack(id)).toMatchObject({ status: "uncertain", providerRef: null });
+    signer.mode = "ok";
+    await expect(giveBack(id)).rejects.toMatchObject({ code: "conflict" });
+    expect(await checkFundReturn(acme.owner, id)).toBeNull();
+    expect(signer.sent).toEqual([]);
+    expect(chain.token.get(wallet)).toBe(25n * ONE);
+    expect((await getEngagementStatement(acme.owner, id))!).toMatchObject({ canReturn: false, returnedUnits: 0n, heldUnits: 25n * ONE });
+  });
+
+  it("waits out a slow confirmation by checking, never by sending twice", async () => {
+    const { id } = await ended();
+    signer.mode = "slow";
+    const sent = await giveBack(id);
+    expect(sent).toMatchObject({ status: "sent" });
+    expect(sent.providerRef).toMatch(/^0x[0-9a-f]{64}$/);
+    // Not counted as returned until the chain confirms it.
+    expect((await getEngagementStatement(acme.owner, id))!).toMatchObject({ returnedUnits: 0n, canReturn: false });
+    await expect(giveBack(id)).rejects.toMatchObject({ code: "conflict" });
+    expect(await checkFundReturn(acme.owner, id)).toMatchObject({ status: "sent" });
+    await expect(checkFundReturn(globex.owner, id)).rejects.toMatchObject({ code: "not_found" });
+
+    chain.head += 3n;
+    expect(await checkFundReturn(acme.owner, id)).toMatchObject({ status: "executed", providerRef: sent.providerRef });
+    expect(signer.sent).toHaveLength(1);
+    expect(await walletOf(id)).toMatchObject({ status: "closed", balanceUnits: 0n });
+  });
+
+  it("records a return that reverted as nothing returned", async () => {
+    const { id, wallet } = await ended();
+    signer.mode = "reverts";
+    expect(await giveBack(id)).toMatchObject({ status: "failed" });
+    expect(chain.token.get(wallet)).toBe(25n * ONE);
+    expect(await walletOf(id)).toMatchObject({ status: "closing", balanceUnits: 25n * ONE });
+    signer.mode = "ok";
+    expect(await giveBack(id)).toMatchObject({ status: "executed" });
+  });
+
+  it("never falls back to the simulated account when real settlement is unavailable", async () => {
+    const { id, wallet } = await ended();
+    await depositSimulatedFunds(acme.owner, acme.org, { amount: "100" });
+    const simulated = async () =>
+      (await db.select().from(schema.masterWalletAccounts).where(eq(schema.masterWalletAccounts.organizationId, acme.org))).find((m) => m.isSimulated)!.balanceUnits;
+    const before = await simulated();
+    setLive(false);
+    const outcome = await giveBack(id);
+    expect(outcome).toMatchObject({ status: "failed" });
+    expect(outcome.failureReason).toContain("not configured");
+    expect(await simulated()).toBe(before);
+    expect(signer.sent).toEqual([]);
+    expect(chain.token.get(wallet)).toBe(25n * ONE);
   });
 });

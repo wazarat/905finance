@@ -16,7 +16,10 @@ import {
   authorizeEngagementAction,
   authorizeFundingAction,
   cancelEngagementAction,
+  checkFundReturnAction,
+  completeEngagementAction,
   provisionWalletAction,
+  returnFundsAction,
   saveMandateAction,
 } from "../actions";
 
@@ -428,6 +431,84 @@ export function CancelEngagementForm({ engagementId }: { engagementId: string })
         </Button>
       </div>
       {!state.ok && state.message ? <FormMessage message={state.message} /> : null}
+    </form>
+  );
+}
+
+/** Declares the work done. Asks once more first, because it cannot be undone. */
+export function CompleteEngagementForm({ engagementId }: { engagementId: string }) {
+  const [state, action] = useActionState(completeEngagementAction, initialFormState);
+  const [confirming, setConfirming] = useState(false);
+  if (!confirming) {
+    return (
+      <Button type="button" variant="outline" size="lg" className="h-10 px-4" onClick={() => setConfirming(true)}>
+        Complete engagement
+      </Button>
+    );
+  }
+  return (
+    <form action={action} className="space-y-3">
+      <input type="hidden" name="engagementId" value={engagementId} />
+      <p className="max-w-xl text-sm leading-relaxed text-ink-soft">
+        Completing ends the agent&apos;s authority for good. Nothing more can be bought. Unused funds
+        stay in the wallet until you choose to return them.
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <SubmitButton pendingLabel="Completing…">Yes, complete it</SubmitButton>
+        <Button type="button" variant="ghost" size="lg" className="h-10 px-4" onClick={() => setConfirming(false)}>
+          Not yet
+        </Button>
+        <Status state={state} />
+      </div>
+    </form>
+  );
+}
+
+/** Authorizes sending the unused funds back to the account that funded the engagement. */
+export function ReturnFundsForm({
+  engagementId,
+  idempotencyKey,
+  amountLabel,
+  destination,
+}: {
+  engagementId: string;
+  idempotencyKey: string;
+  amountLabel: string;
+  destination: string;
+}) {
+  const [state, action] = useActionState(returnFundsAction, initialFormState);
+  const errors = state.ok ? {} : (state.fieldErrors ?? {});
+  return (
+    <form action={action} className="space-y-4" noValidate>
+      <input type="hidden" name="engagementId" value={engagementId} />
+      <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
+      <label className={confirmCard}>
+        <input type="checkbox" name="confirmed" className="mt-0.5 size-4 shrink-0 accent-[var(--brand)]" />
+        <span className="text-sm leading-relaxed text-ink-soft">
+          <span className="font-medium text-foreground">
+            I authorize returning {amountLabel} to {destination}.
+          </span>{" "}
+          It goes back to where it came from and nowhere else.
+        </span>
+      </label>
+      <FieldError id="return-confirmed-error" messages={errors.confirmed} />
+      <div className="flex flex-wrap items-center gap-3">
+        <SubmitButton pendingLabel="Returning…">Return unused funds</SubmitButton>
+        {errors.confirmed ? null : <Status state={state} />}
+      </div>
+    </form>
+  );
+}
+
+export function CheckReturnForm({ engagementId }: { engagementId: string }) {
+  const [state, action] = useActionState(checkFundReturnAction, initialFormState);
+  return (
+    <form action={action} className="flex flex-wrap items-center gap-3">
+      <input type="hidden" name="engagementId" value={engagementId} />
+      <SubmitButton variant="outline" pendingLabel="Checking the chain…">
+        Check again
+      </SubmitButton>
+      <Status state={state} />
     </form>
   );
 }

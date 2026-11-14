@@ -8,7 +8,7 @@ The first service family is software testing and smart-contract security. The da
 
 ## Status
 
-The product is being built in seven milestones, one at a time.
+The product was built in seven milestones, one at a time. All seven are built. What still stands between this and a fully live run is outside the code: accounts, credentials and test funds that only the operator can supply. They are listed under [What is not live yet](#what-is-not-live-yet), and the application reports the same thing about itself in **Settings → What is connected**.
 
 | # | Milestone | State |
 |---|-----------|-------|
@@ -18,7 +18,7 @@ The product is being built in seven milestones, one at a time.
 | 4 | Real software testing services | **Complete** |
 | 5 | Qatom: agent communication | **Built**; live run awaits a Qatom sign-in and catalog items |
 | 6 | GOAT Network: ERC-8004 identity and payment | Identity and reputation **live on Testnet3**; wallets and payments **built**, awaiting Privy, a GOAT Flow test merchant and test funds |
-| 7 | End-to-end integration and deployment | Not started |
+| 7 | End-to-end integration and deployment | **Complete** on simulated settlement; deployed. The live Qatom and GOAT runs await the items above |
 
 ### What works today (Milestone 1)
 
@@ -42,7 +42,7 @@ The product is being built in seven milestones, one at a time.
 - A single gate that decides whether a purchasing agent may contact a seller: only for an ACTIVE engagement, only its selected seller.
 - Cancellation and deadline expiry, both of which end the agent's authority and leave any funds in place.
 
-**Everything involving value in Milestone 2 is simulated.** Wallets are records kept by the platform; no account, chain or asset exists behind them, and they are labelled **Simulated** wherever they appear. The provider interface is real; the provider behind it is a stand-in until the Qatom and GOAT integrations are built.
+**Simulated value is labelled as such.** A simulated wallet is a record kept by the platform; no account, chain or asset exists behind it, and it is labelled **Simulated** wherever it appears. Real wallets arrived in Milestone 6 behind the same provider interface.
 
 ### What works today (Milestone 3)
 
@@ -99,9 +99,35 @@ Until a Qatom account is linked and a seller has a catalog item, agents reach th
 
 **What is real and what is not.** Identity and reputation reads are real and were checked against Testnet3. Real wallets and payments are complete in code and tested against stand-ins for Privy, GOAT Flow and the chain; they have **not** been run against the real services, because that needs a Privy app secret, an approved GOAT Flow test merchant with a fee balance, and test tokens. Everything is Testnet3: assets there have no monetary value, and the production GOAT Flow API is refused.
 
-### What is deliberately not here yet
+### What works today (Milestone 7)
 
-No language-model agent, no real seller endpoint is called and no real payment is made. Tests run only against the two bundled fixtures: running a buyer's own repository needs stronger sandboxing than this milestone provides and is not offered. A purchase whose test could not run is not refunded automatically. Unused funds in a closed engagement's wallet are held; returning them is a later, human-authorized step. The two seeded sellers are illustrative and are labelled **Sample listing** wherever they appear.
+- **Closing an engagement.** The owner can mark an engagement complete, as well as cancel it. Either ends the agent's authority at once and is final.
+- **Returning unused funds, on the owner's authorization only.** Ending an engagement moves nothing. What is left in its wallet goes back when the owner says so, in full, once, to where it came from: the simulated master account, or on Testnet3 the buyer's own funding wallet by a token transfer that is confirmed from the chain. It is never moved to another engagement. A return is refused while any payment's outcome is still unknown.
+- **A final financial record** for every engagement: what was authorized in, what was paid to the seller, what was returned and what is still held, with each funding, payment and return and its reference. It states whether the figures reconcile, and downloads as JSON.
+- **An activity log** for owners and admins: every sensitive action in the organization, who took it and when. Entries are only ever added.
+- **Recovery.** A test that was paid for and could not run can be run again at no charge: no new purchase, no payment touched. A payment whose outcome is unknown is reconciled from the provider's record; while it is unresolved, the engagement buys nothing else, so the same work cannot be paid for twice.
+- **An honest status panel.** Settings shows, for sign-in, the testing worker, Qatom, GOAT identity and GOAT payments, whether each is live, simulated or off in this deployment, and tells owners which settings are missing. It never shows a value.
+- **The whole journey as a test.** `tests/final.test.ts` walks the full demonstration from sign-up to a closed engagement with a real test execution in the middle, proves a second engagement is isolated from the first, and checks each of the eighteen security invariants by name.
+
+### What is not live yet
+
+Everything below is built and tested; none of it has been run against the real service. Each needs something only the operator can do.
+
+| What | Why not | What it needs |
+|---|---|---|
+| Buying a test on the deployed site | No testing worker is hosted, so sellers decline to quote. No payment is taken. | The worker image running somewhere that can reach the site, and `WORKER_TOKEN` set on both |
+| Agent messages over Qatom | Tested against a stand-in built from Qatom's published behaviour | A free catalog item per seller in the Qatom dashboard, `QATOM_FULFILMENT_TOKEN` and `QATOM_SELLER_ITEMS`, and the owner signing in at Qatom from Settings |
+| Real wallets, payments and fund returns on GOAT Testnet3 | Tested against stand-ins for Privy, GOAT Flow and the chain | `PRIVY_APP_SECRET`, an approved GOAT Flow test merchant with a fee balance whose receiving address is the seller's registry wallet, test tokens, and a little test BTC for network fees |
+| A seller other than the two samples answering an agent | Only the sample sellers have a seller-side agent | A third-party seller endpoint that speaks the signed message format |
+
+Other limits, by design for now:
+
+- The purchasing agent is scripted. There is no language model in the loop; the runtime, tools and policy engine it would sit behind are in place.
+- Tests run only against the two bundled fixtures. Running a buyer's own repository needs stronger sandboxing than is provided, and is not offered.
+- A test that could not run can be re-run free of charge; it is not refunded. A payment to a seller is never reversed by the platform.
+- Listing activation is a command-line step. There is no operator console.
+- GOAT is Testnet3 only. The application refuses any other chain and the production payment API. Assets there have no monetary value.
+- The two seeded sellers are illustrative and are labelled **Sample listing** wherever they appear.
 
 ## Stack
 
@@ -151,6 +177,23 @@ Sellers submit listings for activation; they cannot activate their own. Until an
 ```bash
 pnpm seller:activate <slug>
 ```
+
+## Walking through the demonstration
+
+With the app, the database and a local testing worker running (see below), the whole journey can be done by hand on simulated settlement:
+
+1. Sign in, and onboard as a buyer.
+2. Create a project from a bundled fixture, answering the Web3 question.
+3. Open **Explore agents**, choose a sample seller, and select it for the project.
+4. Set the mandate (for example a $20 budget and a $15 per-purchase limit) and authorize it.
+5. Provision the engagement's wallet, add simulated funds to the master account on the **Wallets** page, and authorize funding.
+6. Run the agent. It buys a permitted test; the worker executes it, and the result appears on the engagement and under **Test reports**, with the payment under **Transactions**.
+7. Run the agent again. The next purchase would exceed the budget, so the engagement pauses and an approval request appears.
+8. Read the report, then approve a higher budget under **Approvals**. No funds move.
+9. Authorize additional funding on the engagement page, and run the agent again. It resumes.
+10. Complete the engagement, return the unused funds, and download the final financial record.
+
+Starting a second engagement with the other sample seller shows a separate wallet and mandate; the **Wallets** page lists both. `pnpm test tests/final.test.ts` runs the same journey automatically.
 
 ## The testing worker
 
@@ -323,6 +366,8 @@ src/server/payments/   payment-provider interface and the demo provider
 src/server/agent/      agent runtime, brain interface, seller transport and demo seller
 src/server/goat/       Testnet3 access, ERC-8004 reads, GOAT Flow client, the signer, guarded document fetch
 src/server/identity.ts linking a listing to its on-chain identity
+src/server/closure.ts  completing an engagement, returning unused funds, the final record
+src/server/audit-log.ts, status.ts   the activity log; what is live, simulated or off
 src/server/qatom/      Qatom account link, signed messages, MCP client, seller endpoint checks
 src/server/seller-agent/  the sample sellers' side of a conversation
 src/server/testing/    job queue, worker endpoints' logic, reports
@@ -372,13 +417,26 @@ The rules that matter most are enforced in the database as well as in code, so t
 
 Funding uses a per-attempt idempotency key, so a repeated submit cannot fund twice, and a failed transfer is recorded and never retried automatically.
 
-`src/server/wallets/provider.ts` defines the wallet-provider interface. `SimulatedWalletProvider` implements it today; the GOAT provider replaces it without touching the engagement logic.
+`src/server/wallets/provider.ts` defines the wallet-provider interface. `SimulatedWalletProvider` and `GoatWalletProvider` implement it; which one an engagement uses is fixed when it is authorized.
+
+### Closing, and returning unused funds
+
+An engagement ends by being completed or cancelled by its owner, by reaching its deadline, or by failing. All four revoke the mandate and the agent in the same transaction and are final. None of them moves money: a wallet that still holds funds is marked *closing* and waits.
+
+Returning those funds (`src/server/closure.ts`) is a separate, owner-only authorization with its own confirmation and idempotency key:
+
+- only after the engagement has ended, and only when no payment is still in doubt;
+- always the whole remaining balance, and only to the account the funds came from;
+- one live return per engagement, enforced by a unique index as well as in code;
+- on Testnet3 the transfer's hash is saved before anything waits on it, the return counts only once the chain shows it, and a transfer that may or may not have gone out is marked uncertain and never sent again.
+
+The final record adds up funding, confirmed payments, reservations and returns from the platform's own books and states whether they equal what the wallet holds.
 
 ### Purchases and the policy engine
 
 `executePurchase` in `src/server/policy.ts` is the only way a seller is paid. It decides from platform records alone, in this order:
 
-1. the engagement is active, with an authorized mandate, an active agent and an active wallet;
+1. the engagement is active, with an authorized mandate, an active agent and an active wallet, and no earlier payment whose outcome is still unknown;
 2. the service belongs to the seller selected for the engagement;
 3. the recipient is the one fixed in the mandate at authorization, whatever the seller asked for;
 4. the service is one the mandate permits;
@@ -441,5 +499,7 @@ The Qatom suite runs against a stand-in built from Qatom's published behaviour, 
 - GOAT: the application refusing any chain but Testnet3; a transfer confirmed only when token, sender, recipient and amount all match and it has blocks on top; registration documents never fetched from a private address or through a redirect; a link confirmed only when the agent names the listing, and never payable otherwise; real settlement off unless fully configured; funding credited once, from one wallet, for exactly the transfer the chain shows; a payment sending nothing when GOAT Flow's terms differ from the ones approved; unknown outcomes held rather than repeated; and simulated and real engagements never crossing over.
 
 The GOAT suite runs against stand-ins for the chain, Privy and GOAT Flow. The ERC-8004 reader was also run by hand against real agents on Testnet3.
+
+- The final suite (`tests/final.test.ts`): the complete demonstration from a verified sign-in to a closed engagement, with a real Vitest run in the middle, a blocked purchase, an approved budget, separately authorized funding, a resumed agent, and a final record that reconciles; a second engagement with another seller that shares nothing with the first; each of the eighteen security invariants as its own named check; completion and fund returns, simulated and on Testnet3 stand-ins; re-running a failed test without a second charge; and the activity log and status panel showing only what the viewer may see.
 
 The testing suite also **executes the real tools** against the bundled fixtures, through the same worker code and submission path the application uses, and asserts the figures they report (for example, Vitest: 6 tests, 5 passed, 1 failed). The Vitest cases always run; the Foundry and Slither cases run when those tools are on `PATH` and are skipped otherwise.

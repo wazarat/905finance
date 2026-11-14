@@ -21,6 +21,7 @@ import {
   textList,
   type FormState,
 } from "@/server/form-state";
+import { checkFundReturn, completeEngagement, returnUnusedFunds } from "@/server/closure";
 import { requireActionWorkspace } from "@/server/page-context";
 
 // Engagement ids arrive from the form, but every data-layer call checks that
@@ -209,4 +210,51 @@ export async function reconcilePurchaseAction(_prev: FormState, formData: FormDa
           ? "The payment did not go through. Nothing was charged."
           : "The provider still cannot say what happened.",
   };
+}
+
+/** The owner declares the engagement's work done. Final. */
+export async function completeEngagementAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  try {
+    const { actor } = await requireActionWorkspace();
+    await completeEngagement(actor, text(formData, "engagementId"));
+  } catch (error) {
+    return failureState(error);
+  }
+  refresh();
+  return { ok: true, message: "Engagement completed." };
+}
+
+/** The owner authorizes sending an ended engagement's unused funds back where they came from. */
+export async function returnFundsAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  let outcome: { status: string; failureReason: string | null };
+  try {
+    const { actor } = await requireActionWorkspace();
+    outcome = await returnUnusedFunds(actor, text(formData, "engagementId"), {
+      idempotencyKey: text(formData, "idempotencyKey"),
+      confirmed: formData.get("confirmed") === "on",
+    });
+  } catch (error) {
+    return failureState(error, formValues(formData));
+  }
+  refresh();
+  if (outcome.status === "executed") return { ok: true, message: "Unused funds returned." };
+  if (outcome.status === "sent") {
+    return { ok: true, message: "The transfer was sent and is waiting for the chain to confirm it." };
+  }
+  return { ok: false, message: outcome.failureReason ?? "The funds were not returned." };
+}
+
+/** Look again at a return that was sent but not yet confirmed. Sends nothing. */
+export async function checkFundReturnAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  let status: string | null;
+  try {
+    const { actor } = await requireActionWorkspace();
+    status = (await checkFundReturn(actor, text(formData, "engagementId")))?.status ?? null;
+  } catch (error) {
+    return failureState(error);
+  }
+  refresh();
+  return status === "executed"
+    ? { ok: true, message: "The return is confirmed." }
+    : { ok: true, message: "Not confirmed yet. Nothing was sent again." };
 }
