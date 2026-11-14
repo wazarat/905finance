@@ -9,7 +9,9 @@ import { Web3Badge } from "@/components/sellers/badges";
 import { Button } from "@/components/ui/button";
 import { isTerminal } from "@/lib/engagement-state";
 import { formatUnits } from "@/lib/units";
+import { listApprovals } from "@/server/approvals";
 import { listEngagements } from "@/server/engagements";
+import { getSpendingTotals } from "@/server/transactions";
 import { requireWorkspace } from "@/server/page-context";
 import { listProjects } from "@/server/projects";
 import { getWalletOverview } from "@/server/wallets";
@@ -43,6 +45,9 @@ async function BuyerDashboardContent() {
   const activeCount = engagements.filter((e) => e.state === "ACTIVE").length;
   const openCount = engagements.filter((e) => !isTerminal(e.state)).length;
   const fundedRails = wallets.rails.filter((r) => r.masterAccountId !== null);
+  const approvals = await listApprovals(actor, workspace.organization.id);
+  const pendingApprovals = approvals.filter((a) => a.status === "pending");
+  const spending = await getSpendingTotals(actor, workspace.organization.id);
   const firstName = user.displayName?.split(" ")[0];
 
   return (
@@ -98,8 +103,47 @@ async function BuyerDashboardContent() {
             </>
           )}
         </div>
-        <StatTile label="Pending approvals" value={null} note="Nothing can request approval yet." />
+        <Link
+          href="/approvals"
+          className={
+            pendingApprovals.length > 0
+              ? "rounded-xl border border-warn/40 bg-warn-dim p-5 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              : "rounded-xl border border-border bg-card p-5 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          }
+        >
+          <p className="eyebrow">Pending approvals</p>
+          <p className="figure mt-3 text-3xl text-foreground">{pendingApprovals.length}</p>
+          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+            {pendingApprovals.length > 0
+              ? "An agent is waiting for your decision."
+              : "No agent is waiting on you."}
+          </p>
+        </Link>
       </section>
+
+      {spending.length > 0 ? (
+        <Panel
+          title="Total spending"
+          description="Confirmed payments by your agents, per rail."
+          action={
+            <Button asChild variant="ghost" size="lg" className="h-9 px-3">
+              <Link href="/transactions">
+                Transactions
+                <ArrowRight data-icon="inline-end" aria-hidden="true" />
+              </Link>
+            </Button>
+          }
+        >
+          <ul className="flex flex-wrap gap-x-10 gap-y-3">
+            {spending.map((total) => (
+              <li key={`${total.rail}-${total.asset.code}`}>
+                <p className="figure text-xl text-foreground">{formatUnits(total.spentUnits, total.asset)}</p>
+                <p className="text-xs text-muted-foreground">{total.isSimulated ? "Simulated" : "Settled"}</p>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      ) : null}
 
       <Panel
         title="Projects"

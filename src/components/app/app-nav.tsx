@@ -4,6 +4,8 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  ArrowLeftRight,
+  CircleCheck,
   Compass,
   FolderGit2,
   Handshake,
@@ -22,7 +24,9 @@ const BUYING: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/projects", label: "Projects", icon: FolderGit2 },
   { href: "/engagements", label: "Engagements", icon: Handshake },
+  { href: "/approvals", label: "Approvals", icon: CircleCheck },
   { href: "/wallets", label: "Wallets", icon: Wallet },
+  { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
   { href: "/agents", label: "Explore agents", icon: Compass },
 ];
 

@@ -6,7 +6,9 @@ import { EmptyState, NotYetActive, PageHeader, Panel, StatTile } from "@/compone
 import { ListingStatusBadge, NotConnectedBadge } from "@/components/sellers/badges";
 import { Button } from "@/components/ui/button";
 import { requireWorkspace } from "@/server/page-context";
+import { formatUnits } from "@/lib/units";
 import { getSellerListing, listingGaps } from "@/server/sellers";
+import { getSellerEarnings } from "@/server/transactions";
 import { EnableRoleForm } from "../enable-role-form";
 
 export const metadata: Metadata = { title: "Seller dashboard" };
@@ -34,6 +36,7 @@ async function SellerDashboardContent() {
 
   const { profile, offerings } = listing;
   const gaps = listingGaps(listing);
+  const earnings = await getSellerEarnings(actor, workspace.organization.id);
 
   return (
     <div className="space-y-10">
@@ -72,8 +75,35 @@ async function SellerDashboardContent() {
           </p>
         </div>
         <StatTile label="Service offerings" value={String(offerings.length)} />
-        <StatTile label="Jobs" value={null} note="No jobs can be purchased yet." />
-        <StatTile label="Revenue" value={null} note="No payment rail is connected." />
+        <StatTile
+          label="Jobs"
+          value={String(earnings?.jobs ?? 0)}
+          note="Purchases paid for by buyer agents."
+        />
+        <div className="rounded-xl border border-border bg-card p-5">
+          <p className="eyebrow">Revenue</p>
+          {earnings && earnings.totals.length > 0 ? (
+            <>
+              <ul className="mt-3 space-y-1.5">
+                {earnings.totals.map((total) => (
+                  <li key={`${total.rail}-${total.asset.code}`} className="figure text-base text-foreground">
+                    {formatUnits(total.spentUnits, total.asset)}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                {earnings.totals.every((t) => t.isSimulated)
+                  ? "Simulated. No real funds were received."
+                  : "Per rail."}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="figure mt-3 text-3xl text-muted-foreground">—</p>
+              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">No payments received.</p>
+            </>
+          )}
+        </div>
       </section>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -99,11 +129,27 @@ async function SellerDashboardContent() {
             </div>
           </dl>
         </Panel>
-        <Panel title="Payment activity" action={<NotYetActive />}>
-          <EmptyState
-            title="No payments yet"
-            body="Payments from authorized buyer agents will be listed here with their provider references."
-          />
+        <Panel title="Payment activity" description="Payments from authorized buyer agents.">
+          {earnings && earnings.recent.length > 0 ? (
+            <ul className="-my-3 divide-y divide-border">
+              {earnings.recent.map((payment) => (
+                <li key={payment.id} className="space-y-1 py-3">
+                  <div className="flex items-baseline justify-between gap-4">
+                    <p className="text-sm text-foreground">{payment.offeringName}</p>
+                    <p className="figure text-sm text-foreground">
+                      {formatUnits(payment.amountUnits, payment.asset)}
+                    </p>
+                  </div>
+                  <p className="figure text-xs break-all text-muted-foreground">{payment.providerRef}</p>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <EmptyState
+              title="No payments yet"
+              body="Payments from authorized buyer agents will be listed here with their provider references."
+            />
+          )}
         </Panel>
       </div>
 

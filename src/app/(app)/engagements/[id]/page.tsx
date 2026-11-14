@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, Ban, Check } from "lucide-react";
-import { NotYetActive, PageHeader, Panel } from "@/components/app/page-header";
+import { PageHeader, Panel } from "@/components/app/page-header";
 import { PageSkeleton } from "@/components/app/page-skeleton";
 import {
   EngagementStateBadge,
@@ -29,9 +29,17 @@ import {
 } from "@/lib/engagement-state";
 import { formatMoney } from "@/lib/money";
 import { formatUnits, unitsToDecimalString } from "@/lib/units";
+import { getEngagementActivity } from "@/server/engagement-activity";
 import { getEngagementDetail, type EngagementDetail } from "@/server/engagements";
 import { isAppError } from "@/server/errors";
 import { requireWorkspace } from "@/server/page-context";
+import {
+  AgentPanel,
+  ApprovalPanel,
+  BudgetPanel,
+  ConversationPanel,
+  PurchasesPanel,
+} from "./agent-panels";
 import {
   AuthorizeEngagementForm,
   CancelEngagementForm,
@@ -84,8 +92,10 @@ function AgentAccess({ detail }: { detail: EngagementDetail }) {
           </p>
           <p className="text-sm leading-relaxed text-muted-foreground">
             {open
-              ? "It may contact this seller only, and only while the engagement is active. The agent itself is not switched on yet, so nothing is being sent or bought."
-              : isTerminal(engagement.state)
+              ? "It may contact this seller only, and only while the engagement is active. Every purchase it attempts is checked against your mandate first."
+              : engagement.state === "PAUSED_FOR_APPROVAL"
+                ? "The engagement is paused for your decision. No paid work can start while it is paused."
+                : isTerminal(engagement.state)
                 ? "This engagement has ended. The agent's authority is revoked."
                 : "No agent may contact the seller until the engagement is authorized, its wallet is provisioned and funded, and every check has passed."}
           </p>
@@ -106,11 +116,6 @@ function MandateSummary({ detail }: { detail: EngagementDetail }) {
       </Row>
       <Row label="Per-purchase limit">
         <span className="figure">{formatUnits(mandate.perTransactionLimitUnits, mandate.asset)}</span>
-      </Row>
-      <Row label="Spent or reserved">
-        <span className="inline-flex items-center gap-2 text-muted-foreground">
-          — <NotYetActive>Purchasing not yet active</NotYetActive>
-        </span>
       </Row>
       <Row label="Payment rail">
         {detail.engagement.rail ? railLabel(detail.engagement.rail) : "—"} · {mandate.asset.code}
@@ -181,6 +186,7 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
     throw error;
   });
 
+  const activity = await getEngagementActivity(actor, id);
   const { engagement, seller, project, mandate, wallet, can } = detail;
   const state = engagement.state;
   const ended = isTerminal(state);
@@ -214,8 +220,12 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
 
   // --- funding form inputs --------------------------------------------------
   const master = detail.masterBalanceUnits ?? 0n;
-  const suggested =
-    wallet && mandate
+  const fundingRequest =
+    activity.pendingApproval?.kind === "additional_funding" ? activity.pendingApproval : null;
+  const suggested = fundingRequest
+    ? // The agent is waiting on a specific shortfall: suggest exactly that.
+      unitsToDecimalString(fundingRequest.shortfallUnits, fundingRequest.asset.decimals)
+    : wallet && mandate
       ? wallet.balanceUnits > 0n
         ? ""
         : unitsToDecimalString(
@@ -280,6 +290,27 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
           demonstration. No provider is contacted and no real funds exist or move.
         </p>
       ) : null}
+
+      {activity.pendingApproval ? (
+        <ApprovalPanel approval={activity.pendingApproval} activity={activity} />
+      ) : null}
+
+      {activity.budget && wallet && state !== "SELLER_SELECTED" ? (
+        <BudgetPanel budget={activity.budget} />
+      ) : null}
+
+      {wallet && (state === "ACTIVE" || state === "PAUSED_FOR_APPROVAL" || activity.lastRun) ? (
+        <AgentPanel
+          engagementId={engagement.id}
+          state={state}
+          sellerName={seller.displayName}
+          activity={activity}
+        />
+      ) : null}
+
+      {activity.purchases.length > 0 || state === "ACTIVE" ? <PurchasesPanel activity={activity} /> : null}
+
+      <ConversationPanel messages={activity.messages} sellerName={seller.displayName} />
 
       {/* 1. Seller selected: configure and authorize the mandate */}
       {state === "SELLER_SELECTED" ? (

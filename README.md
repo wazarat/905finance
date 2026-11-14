@@ -14,7 +14,7 @@ The product is being built in seven milestones, one at a time.
 |---|-----------|-------|
 | 1 | Foundation, authentication and marketplace | **Complete** |
 | 2 | Engagements and wallet architecture | **Complete** |
-| 3 | Purchasing agent and human controls | Not started |
+| 3 | Purchasing agent and human controls | **Complete** |
 | 4 | Real software testing services | Not started |
 | 5 | Qatom integration | Not started |
 | 6 | GOAT Network and ERC-8004 | Not started |
@@ -44,9 +44,21 @@ The product is being built in seven milestones, one at a time.
 
 **Everything involving value in Milestone 2 is simulated.** Wallets are records kept by the platform; no account, chain or asset exists behind them, and they are labelled **Simulated** wherever they appear. The provider interface is real; the provider behind it is a stand-in until the Qatom and GOAT integrations are built.
 
+### What works today (Milestone 3)
+
+- A purchasing-agent runtime. A person starts a run; the agent proposes one step at a time as a structured tool call, and the runtime carries out only valid calls to the tools it offers.
+- A deterministic policy engine that every purchase goes through, checking the engagement, seller, recipient, service, amount, budget and wallet before anything is reserved or paid.
+- Spending reservations, taken atomically, so simultaneous purchases cannot exceed the budget or the wallet.
+- Idempotent purchases, payment verification before success is recorded, and reconciliation (never an automatic retry) for payments whose outcome is unknown.
+- Approval requests: when a purchase would exceed the budget, the engagement pauses and the owner can approve a higher total, choose different permitted work, decline, or cancel.
+- Budget increases that change the budget and nothing else. A wallet shortfall is a separate request, answered only by a separate funding authorization.
+- Approvals and Transactions pages, with every payment's provider reference.
+
+**The agent, the seller and the payments in Milestone 3 are demonstrations.** The agent is a scripted one with no language model. It can run only against the two sample sellers, which are answered by a demo seller that acknowledges purchases and executes no tests. Payments go through a demo provider that moves nothing; simulated balances are debited in the platform's own ledger. Nothing reports test counts, results or findings, because no test runs yet.
+
 ### What is deliberately not here yet
 
-No purchasing agent runs, no agent-to-agent message is sent, no payment is made and no test executes. Budgets are recorded but nothing can spend against them yet. Unused funds in a closed engagement's wallet are held; returning them is a later, human-authorized step. Where these will appear, the interface says "Not yet active" rather than showing placeholder numbers. The two seeded sellers are illustrative and are labelled **Sample listing** wherever they appear; an engagement with one is a demonstration.
+No language-model agent, no real seller endpoint is called, no real payment is made and no test executes. Unused funds in a closed engagement's wallet are held; returning them is a later, human-authorized step. The two seeded sellers are illustrative and are labelled **Sample listing** wherever they appear.
 
 ## Stack
 
@@ -140,6 +152,8 @@ src/components/        UI primitives (shadcn) and feature components
 src/db/                Drizzle schema, client, migration runner, seed
 src/server/            authentication, permissions, data-access layer, audit
 src/server/wallets/    wallet-provider interface and the simulated provider
+src/server/payments/   payment-provider interface and the demo provider
+src/server/agent/      agent runtime, brain interface, seller transport and demo seller
 src/lib/               capability and rail catalog, state machine, money and unit helpers
 drizzle/               generated SQL migrations
 tests/                 Vitest suites
@@ -185,6 +199,30 @@ Funding uses a per-attempt idempotency key, so a repeated submit cannot fund twi
 
 `src/server/wallets/provider.ts` defines the wallet-provider interface. `SimulatedWalletProvider` implements it for both rails today; real providers replace it per rail without touching the engagement logic.
 
+### Purchases and the policy engine
+
+`executePurchase` in `src/server/policy.ts` is the only way a seller is paid. It decides from platform records alone, in this order:
+
+1. the engagement is active, with an authorized mandate, an active agent and an active wallet;
+2. the service belongs to the seller selected for the engagement;
+3. the recipient is the one fixed in the mandate at authorization, whatever the seller asked for;
+4. the service is one the mandate permits;
+5. the asset is the mandate's and the amount is exactly the listed price;
+6. the per-purchase limit and the remaining budget allow it;
+7. the wallet has funds not already promised to another payment;
+8. spending capacity is reserved, in the same transaction as the checks;
+9. the payment is made through the rail's provider;
+10. the payment is verified independently;
+11. the outcome is recorded.
+
+A failed check blocks the purchase and is recorded. A definite payment failure releases the reservation and is not retried. A payment whose outcome is unknown keeps its reservation, so the capacity cannot be spent twice, until it is reconciled from the provider's record.
+
+The agent (`src/server/agent/`) has exactly two tools: buy a permitted service, and finish. There is no tool that changes a mandate, seller, rail or wallet, and extra fields on a tool call (a price, a recipient, an approval) are refused. What a seller replies is parsed as untrusted data: a seller that quotes a higher price, names a different account, or tells the agent to raise its budget is blocked by the policy engine, not by the agent's good sense.
+
+The database backs this up: a trigger refuses any reservation that would exceed the budget or the per-purchase limit, another refuses any agent or seller message unless the engagement is ACTIVE and the seller is the selected one, payments can only be drawn on the wallet of their own engagement, and confirmed payments cannot be altered.
+
+`src/server/payments/provider.ts` defines the payment-provider interface. `DemoPaymentProvider` implements it for both rails today.
+
 ### Money
 
 Prices are stored as integer minor units with a currency code. Mandate and wallet amounts are stored exactly in the asset's smallest unit (`numeric(78,0)`, surfaced as `bigint`), wide enough for 18-decimal tokens. User-entered decimals are parsed with integer arithmetic; no monetary value passes through floating point.
@@ -212,4 +250,10 @@ The suite runs the real migrations in an in-process Postgres and exercises the d
 - rail separation, in code and in the database;
 - funding safety: not above the master balance, once per idempotency key, no overdraw from simultaneous requests, nothing moved on provider failure;
 - the agent gate staying shut in every state but ACTIVE, for every seller but the selected one, and after cancellation or expiry;
-- the seller's organization being unable to see, authorize, fund or cancel a buyer's engagement.
+- the seller's organization being unable to see, authorize, fund or cancel a buyer's engagement;
+- the policy engine: purchases within the mandate succeed, and each of wrong seller, redirected recipient, unpermitted service, altered price, over-limit, over-budget, underfunded and inactive is blocked;
+- the $100 budget, $85 used, $25 proposed demonstration end to end: blocked, approved to $500 with no funds moved, then separately funded and resumed;
+- duplicate requests charging once, and simultaneous requests unable to exceed the budget or the wallet;
+- failed, unverifiable and unknown-outcome payments never recording success and never retrying;
+- approvals being owner-only, and a budget increase changing nothing but the budget;
+- the agent runtime: no activity before ACTIVE, only the selected seller, and agents or sellers that try to change the deal being refused.
