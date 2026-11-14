@@ -1,4 +1,9 @@
-# Local development database. Not used in production.
+# Local development services. Not used in production.
+#
+#   docker compose up -d --wait          the database
+#   docker compose --env-file .env.local --profile worker up --build worker
+#                                        the testing worker, against the app
+#                                        running on this machine
 services:
   postgres:
     image: postgres:17-alpine
@@ -17,6 +22,35 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # Executes test jobs. It talks to the application over HTTP and is given the
+  # worker token only: it has no route to the database and no other secret.
+  worker:
+    profiles: ["worker"]
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    image: 905finance-worker
+    restart: unless-stopped
+    environment:
+      APP_URL: ${WORKER_APP_URL:-http://host.docker.internal:3000}
+      WORKER_TOKEN: ${WORKER_TOKEN:?Set WORKER_TOKEN, the same value the application has}
+      WORKER_ID: ${WORKER_ID:-docker-worker}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Nothing in the image can be modified by a job. Each job works in a copy
+    # under .runs, which lives in memory and is gone when the container stops.
+    read_only: true
+    tmpfs:
+      - /app/worker/.runs:uid=1000,gid=1000,mode=0700,exec,size=512m
+      - /tmp:uid=1000,gid=1000,mode=1777,size=256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    mem_limit: 2g
+    cpus: 2
 
 volumes:
   nof905_pgdata:

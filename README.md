@@ -15,7 +15,7 @@ The product is being built in seven milestones, one at a time.
 | 1 | Foundation, authentication and marketplace | **Complete** |
 | 2 | Engagements and wallet architecture | **Complete** |
 | 3 | Purchasing agent and human controls | **Complete** |
-| 4 | Real software testing services | Not started |
+| 4 | Real software testing services | **Complete** |
 | 5 | Qatom integration | Not started |
 | 6 | GOAT Network and ERC-8004 | Not started |
 | 7 | End-to-end integration and deployment | Not started |
@@ -54,11 +54,23 @@ The product is being built in seven milestones, one at a time.
 - Budget increases that change the budget and nothing else. A wallet shortfall is a separate request, answered only by a separate funding authorization.
 - Approvals and Transactions pages, with every payment's provider reference.
 
-**The agent, the seller and the payments in Milestone 3 are demonstrations.** The agent is a scripted one with no language model. It can run only against the two sample sellers, which are answered by a demo seller that acknowledges purchases and executes no tests. Payments go through a demo provider that moves nothing; simulated balances are debited in the platform's own ledger. Nothing reports test counts, results or findings, because no test runs yet.
+**The agent, the seller and the payments are demonstrations.** The agent is a scripted one with no language model. It can run only against the two sample sellers, which are answered by a demo seller inside the application. Payments go through a demo provider that moves nothing; simulated balances are debited in the platform's own ledger.
+
+### What works today (Milestone 4)
+
+- **Real test execution.** A paid purchase becomes a job for a separate testing worker, which runs Vitest, Foundry (`forge build`, unit, fuzz and invariant tests) or Slither and reports what happened.
+- Two bundled projects with deliberate defects, in `fixtures/`: a TypeScript ordering service (two off-by-one errors) and a Solidity vault (a reentrancy bug and a fee that can exceed the amount). Each defect is caught by a test that genuinely fails.
+- A job queue with leases: a worker claims the oldest job it can run; a job held by a worker that dies goes back in the queue, and is given up on after three attempts.
+- Structured results: tests executed, passed, failed and skipped, duration, tool and version, command, exit code and the tool's output, plus findings with severity, location, evidence and a recommendation.
+- Test reports: a list of every job, a full report per job with its usage charge and payment reference, and the whole record downloadable as JSON.
+- Job status on the engagement page (queued, running, result), updating as the worker reports, and real jobs and findings on the dashboard.
+- Nobody pays for a test that cannot run: the seller declines to quote, before any payment, when the project is not a bundled fixture, when no worker is online, or when no worker has the tool that test type needs.
+
+**The test execution is genuine; the payment for it is still simulated.** Every count and finding shown is taken from the testing tool's own machine-readable report. Where a tool has no notion of a test count (compilation, static analysis) the report shows none rather than a zero. A run that could not complete is reported as exactly that, and the purchase is shown as paid but not delivered.
 
 ### What is deliberately not here yet
 
-No language-model agent, no real seller endpoint is called, no real payment is made and no test executes. Unused funds in a closed engagement's wallet are held; returning them is a later, human-authorized step. The two seeded sellers are illustrative and are labelled **Sample listing** wherever they appear.
+No language-model agent, no real seller endpoint is called and no real payment is made. Tests run only against the two bundled fixtures: running a buyer's own repository needs stronger sandboxing than this milestone provides and is not offered. A purchase whose test could not run is not refunded automatically. Unused funds in a closed engagement's wallet are held; returning them is a later, human-authorized step. The two seeded sellers are illustrative and are labelled **Sample listing** wherever they appear.
 
 ## Stack
 
@@ -91,6 +103,7 @@ pnpm dev                     # http://localhost:3000
 | `PRIVY_APP_SECRET` | Privy app secret. Server only. |
 | `AUTH_MODE` | Set to `dev` to enable development sign-in (see below). Leave empty otherwise. |
 | `NEXT_PUBLIC_APP_URL` | Public base URL of the app. |
+| `WORKER_TOKEN` | Shared secret the testing worker presents. At least 32 random characters (`openssl rand -hex 32`). While it is unset the worker endpoints refuse every request. |
 
 Secrets live in `.env.local`, which is git-ignored. Never commit them.
 
@@ -106,6 +119,49 @@ Sellers submit listings for activation; they cannot activate their own. Until an
 pnpm seller:activate <slug>
 ```
 
+## The testing worker
+
+Tests are never executed inside the web application. They run in a separate worker (`worker/`), a small Node program with one dependency (Vitest) that knows nothing about the application's code or database.
+
+```
+buyer's agent ──pays──▶ purchase ──▶ testing job (queued)
+                                         │  POST /api/worker/claim      (worker token)
+                                         ▼
+                                  testing worker ── runs Vitest / Foundry / Slither
+                                         │           in a private copy of the fixture
+                                         │  POST /api/worker/jobs/<id>/result
+                                         ▼
+                              result + findings stored ──▶ purchase delivered ──▶ report
+```
+
+What keeps it contained:
+
+- **It holds one credential**, its own worker token. It is never given the database address, the session secret or any wallet or signing key, and it refuses to start if it finds one in its environment.
+- **A job names a fixture and a test type, nothing else.** What is actually executed comes from the worker's own table (`worker/src/plans.mjs`); no command, path or argument ever travels from the application to the worker.
+- **Each job gets a private copy** of the fixture, deleted afterwards, and runs with a scrubbed environment (the worker token is not passed to the tests), a hard time limit and bounded output.
+- **Reports are checked before they are stored.** Counts must add up, a run with failures cannot be reported as passed, and a report must come from the tool the job calls for. A report is text to be read: nothing in it can change a mandate, a budget or an engagement.
+
+### Running it
+
+Set the same `WORKER_TOKEN` for the application (in `.env.local`) and for the worker.
+
+On your machine, using whatever tools are installed (a missing tool just means the worker never claims work that needs it):
+
+```bash
+cd worker
+APP_URL=http://localhost:3000 WORKER_TOKEN=<the token> node src/main.mjs
+```
+
+In a container, which is how it is meant to run: a read-only filesystem, no Linux capabilities, an unprivileged user, and memory, CPU and process limits. The image includes Vitest, Foundry and Slither.
+
+```bash
+docker compose --env-file .env.local --profile worker up --build worker
+```
+
+Set `WORKER_APP_URL` if the application is not at `http://host.docker.internal:3000`. To serve a deployed site, run the same image anywhere that can reach it, with `APP_URL` set to the site's address and `WORKER_TOKEN` matching the one configured there.
+
+Add `--drain` (`node src/main.mjs --drain`) to run the jobs that are waiting and then exit.
+
 ## Deploying to Vercel
 
 Import the repository in Vercel, then add these in **Project → Settings → Environment Variables** before the first visit:
@@ -116,6 +172,9 @@ Import the repository in Vercel, then add these in **Project → Settings → En
 | `SESSION_SECRET` | 32+ random characters (`openssl rand -base64 48`). |
 | `NEXT_PUBLIC_PRIVY_APP_ID`, `PRIVY_APP_SECRET` | From the Privy dashboard, for a Privy app dedicated to this site. |
 | `NEXT_PUBLIC_APP_URL` | The deployment's public URL. |
+| `WORKER_TOKEN` | 32+ random characters, shared with the testing worker. Optional: without it, or with no worker running, sellers decline to quote and no test is bought. |
+
+The testing worker does not run on Vercel. Host the worker image somewhere that can reach the site (see [The testing worker](#the-testing-worker)).
 
 In the Privy dashboard, add every origin the site is served from (for example `https://905finance.vercel.app` and `http://localhost:3000`) to the app's **allowed origins**, and enable the sign-in methods you want (email, Google, wallet). If the origin is missing, the Privy sign-in window shows "Something went wrong" and nothing reaches this app's server.
 
@@ -154,6 +213,10 @@ src/server/            authentication, permissions, data-access layer, audit
 src/server/wallets/    wallet-provider interface and the simulated provider
 src/server/payments/   payment-provider interface and the demo provider
 src/server/agent/      agent runtime, brain interface, seller transport and demo seller
+src/server/testing/    job queue, worker endpoints' logic, reports
+src/app/api/worker/    the two endpoints a testing worker calls
+worker/                the testing worker: runners for Vitest, Foundry and Slither, Dockerfile
+fixtures/              the bundled projects with known defects that tests run against
 src/lib/               capability and rail catalog, state machine, money and unit helpers
 drizzle/               generated SQL migrations
 tests/                 Vitest suites
@@ -256,4 +319,7 @@ The suite runs the real migrations in an in-process Postgres and exercises the d
 - duplicate requests charging once, and simultaneous requests unable to exceed the budget or the wallet;
 - failed, unverifiable and unknown-outcome payments never recording success and never retrying;
 - approvals being owner-only, and a budget increase changing nothing but the budget;
-- the agent runtime: no activity before ACTIVE, only the selected seller, and agents or sellers that try to change the deal being refused.
+- the agent runtime: no activity before ACTIVE, only the selected seller, and agents or sellers that try to change the deal being refused;
+- testing: the seller declining before payment when a test cannot run; one job per paid purchase; claiming, leases, retries and giving up; reports refused when they contradict themselves, come from the wrong tool or the wrong worker; a report's text being unable to change a mandate; reports readable by the buying organization only; the worker endpoints refusing a missing or wrong token; and the worker passing none of its secrets to the tests it runs.
+
+The testing suite also **executes the real tools** against the bundled fixtures, through the same worker code and submission path the application uses, and asserts the figures they report (for example, Vitest: 6 tests, 5 passed, 1 failed). The Vitest cases always run; the Foundry and Slither cases run when those tools are on `PATH` and are skipped otherwise.
