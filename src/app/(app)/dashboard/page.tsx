@@ -3,9 +3,10 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { PageSkeleton } from "@/components/app/page-skeleton";
-import { EmptyState, NotYetActive, PageHeader, Panel, StatTile } from "@/components/app/page-header";
+import { EmptyState, PageHeader, Panel, StatTile } from "@/components/app/page-header";
 import { EngagementStateBadge } from "@/components/engagements/badges";
 import { Web3Badge } from "@/components/sellers/badges";
+import { JobBadge, SeverityBadge } from "@/components/testing/badges";
 import { Button } from "@/components/ui/button";
 import { isTerminal } from "@/lib/engagement-state";
 import { formatUnits } from "@/lib/units";
@@ -14,6 +15,7 @@ import { listEngagements } from "@/server/engagements";
 import { getSpendingTotals } from "@/server/transactions";
 import { requireWorkspace } from "@/server/page-context";
 import { listProjects } from "@/server/projects";
+import { getTestingOverview, listTestingJobs } from "@/server/testing/reports";
 import { getWalletOverview } from "@/server/wallets";
 import { EnableRoleForm } from "../enable-role-form";
 
@@ -48,6 +50,8 @@ async function BuyerDashboardContent() {
   const approvals = await listApprovals(actor, workspace.organization.id);
   const pendingApprovals = approvals.filter((a) => a.status === "pending");
   const spending = await getSpendingTotals(actor, workspace.organization.id);
+  const recentJobs = await listTestingJobs(actor, workspace.organization.id, { limit: 5 });
+  const testing = await getTestingOverview(actor, workspace.organization.id);
   const firstName = user.displayName?.split(" ")[0];
 
   return (
@@ -240,17 +244,77 @@ async function BuyerDashboardContent() {
       </Panel>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Panel title="Recent testing jobs" action={<NotYetActive />}>
-          <EmptyState
-            title="No jobs have run"
-            body="Jobs appear here once an authorized engagement purchases a test. Counts and results always come from real executions."
-          />
+        <Panel
+          title="Recent testing jobs"
+          action={
+            recentJobs.length > 0 ? (
+              <Button asChild variant="ghost" size="lg" className="h-9 px-3">
+                <Link href="/reports">
+                  All reports
+                  <ArrowRight data-icon="inline-end" aria-hidden="true" />
+                </Link>
+              </Button>
+            ) : null
+          }
+        >
+          {recentJobs.length === 0 ? (
+            <EmptyState
+              title="No jobs have run"
+              body="Jobs appear here once an authorized engagement purchases a test. Counts and results always come from real executions."
+            />
+          ) : (
+            <ul className="-my-2 divide-y divide-border">
+              {recentJobs.map((job) => (
+                <li key={job.id}>
+                  <Link
+                    href={`/reports/${job.id}`}
+                    className="flex items-center justify-between gap-4 rounded-md py-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium text-foreground">{job.offeringName}</span>
+                      <span className="block truncate text-sm text-muted-foreground">
+                        {job.result ? job.result.summary : job.projectName}
+                      </span>
+                    </span>
+                    <JobBadge status={job.status} outcome={job.result?.outcome} />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
         </Panel>
-        <Panel title="Findings" action={<NotYetActive />}>
-          <EmptyState
-            title="No findings yet"
-            body="Failures and security findings from completed jobs will be listed here with severity and evidence."
-          />
+        <Panel
+          title="Findings"
+          description={
+            testing.recentFindings.length > 0 ? "Medium severity and above, newest first." : undefined
+          }
+        >
+          {testing.recentFindings.length === 0 ? (
+            <EmptyState
+              title="No findings yet"
+              body="Failures and security findings from completed jobs are listed here with severity and evidence."
+            />
+          ) : (
+            <ul className="-my-2 divide-y divide-border">
+              {testing.recentFindings.map((finding) => (
+                <li key={finding.id}>
+                  <Link
+                    href={`/reports/${finding.jobId}`}
+                    className="flex items-center justify-between gap-4 rounded-md py-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium text-foreground">{finding.title}</span>
+                      <span className="block truncate text-sm text-muted-foreground">
+                        {finding.projectName}
+                        {finding.location ? ` · ${finding.location}` : ""}
+                      </span>
+                    </span>
+                    <SeverityBadge severity={finding.severity} />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
         </Panel>
       </div>
     </div>

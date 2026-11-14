@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import Link from "next/link";
 import { NotYetActive, Panel } from "@/components/app/page-header";
 import { SimulatedBadge } from "@/components/engagements/badges";
+import { AutoRefresh } from "@/components/testing/auto-refresh";
+import { JobBadge } from "@/components/testing/badges";
 import { Button } from "@/components/ui/button";
 import type { EngagementState, PurchaseStatus } from "@/db/schema";
 import { formatUnits, unitsToDecimalString } from "@/lib/units";
@@ -78,6 +80,7 @@ export function ApprovalPanel({
 }) {
   const asset = approval.asset;
   const delivered = activity.purchases.filter((p) => p.status === "delivered" || p.status === "paid");
+  const reported = delivered.filter((p) => p.job?.outcome);
   const needed = approval.spentUnits + approval.reservedUnits + approval.proposedAmountUnits;
   const isBudget = approval.kind === "budget_increase";
 
@@ -126,14 +129,20 @@ export function ApprovalPanel({
             <>
               <p className="mt-1 text-sm text-muted-foreground">
                 {delivered.length} {delivered.length === 1 ? "purchase" : "purchases"} paid for.
-                {delivered.some((p) => p.isSimulated)
-                  ? " The demo seller acknowledged them; no tests were executed, so there are no results or findings to review."
-                  : ""}
+                {" "}
+                {reported.length === 0
+                  ? "No test has reported a result yet."
+                  : `${reported.length} ${reported.length === 1 ? "has" : "have"} reported a result; open a purchase below to read it.`}
               </p>
               <ul className="mt-2 space-y-1 text-sm text-ink-soft">
                 {delivered.slice(0, 8).map((purchase) => (
                   <li key={purchase.id} className="flex justify-between gap-4">
-                    <span>{purchase.offeringName}</span>
+                    <span>
+                      {purchase.offeringName}
+                      {purchase.job?.summary ? (
+                        <span className="block text-xs text-muted-foreground">{purchase.job.summary}</span>
+                      ) : null}
+                    </span>
                     <span className="figure text-muted-foreground">
                       {formatUnits(purchase.amountUnits, purchase.asset)}
                     </span>
@@ -191,7 +200,9 @@ export function AgentPanel({
   sellerName: string;
   activity: EngagementActivity;
 }) {
-  const { lastRun, sellerConnection } = activity;
+  const { lastRun, sellerConnection, testing } = activity;
+  const runnable = testing?.services.filter((service) => service.blocker === null) ?? [];
+  const blocked = testing?.services.filter((service) => service.blocker !== null) ?? [];
   return (
     <Panel
       title="Purchasing agent"
@@ -210,6 +221,27 @@ export function AgentPanel({
             <dt className="text-muted-foreground">Agent</dt>
             <dd className="mt-0.5 text-foreground">Scripted demo agent, no language model</dd>
           </div>
+          {testing ? (
+            <div className="sm:col-span-2">
+              <dt className="text-muted-foreground">Test execution</dt>
+              <dd className="mt-0.5 text-foreground">
+                {runnable.length > 0 ? (
+                  <>
+                    <span className="text-brand">Testing worker online.</span> It can run{" "}
+                    {runnable.map((service) => service.name).join(", ")}.
+                  </>
+                ) : (
+                  <span className="text-warn">None of the permitted tests can be run right now.</span>
+                )}
+                {blocked.length > 0 ? (
+                  <span className="mt-1 block text-sm text-muted-foreground">
+                    The seller will decline {blocked.map((service) => service.name).join(", ")} before
+                    any payment: {blocked[0].blocker}
+                  </span>
+                ) : null}
+              </dd>
+            </div>
+          ) : null}
         </dl>
 
         {!sellerConnection ? (
@@ -255,7 +287,7 @@ export function AgentPanel({
 }
 
 const PURCHASE_LABELS: Record<PurchaseStatus, { label: string; className: string }> = {
-  delivered: { label: "Paid and delivered", className: "text-brand" },
+  delivered: { label: "Paid · test completed", className: "text-brand" },
   paid: { label: "Paid", className: "text-brand" },
   reserved: { label: "Payment in progress", className: "text-ink-soft" },
   blocked: { label: "Blocked", className: "text-warn" },
@@ -278,11 +310,27 @@ function PurchaseRow({ purchase, canOperate }: { purchase: PurchaseLine; canOper
         <span className={status.className}>{status.label}</span>
         <span className="text-muted-foreground">{dateTimeFormat.format(purchase.createdAt)}</span>
         {purchase.isSimulated && (purchase.status === "paid" || purchase.status === "delivered") ? (
-          <SimulatedBadge />
+          <SimulatedBadge label="Payment simulated" />
         ) : null}
       </div>
       {purchase.message ? <p className="text-sm text-muted-foreground">{purchase.message}</p> : null}
-      {purchase.deliverySummary ? (
+      {purchase.job ? (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-0.5">
+          <JobBadge status={purchase.job.status} outcome={purchase.job.outcome} />
+          <span className="text-sm text-ink-soft">
+            {purchase.job.summary ??
+              (purchase.job.status === "running"
+                ? "A testing worker is executing this now."
+                : "Waiting for a testing worker.")}
+          </span>
+          <Link
+            href={`/reports/${purchase.job.id}`}
+            className="text-sm text-foreground underline underline-offset-4 hover:text-brand"
+          >
+            {purchase.job.outcome ? "View report" : "View job"}
+          </Link>
+        </div>
+      ) : purchase.deliverySummary ? (
         <p className="text-sm text-muted-foreground">{purchase.deliverySummary}</p>
       ) : null}
       {purchase.paymentReference ? (
@@ -310,6 +358,9 @@ export function PurchasesPanel({ activity }: { activity: EngagementActivity }) {
         ) : null
       }
     >
+      {activity.purchases.some((p) => p.job?.status === "queued" || p.job?.status === "running") ? (
+        <AutoRefresh />
+      ) : null}
       {activity.purchases.length === 0 ? (
         <p className="text-sm text-muted-foreground">Nothing yet. Purchases appear here once the agent runs.</p>
       ) : (
@@ -326,8 +377,11 @@ export function PurchasesPanel({ activity }: { activity: EngagementActivity }) {
 const MESSAGE_KINDS: Record<string, string> = {
   quote_request: "asked for a quote",
   quote: "quoted",
-  delivery_request: "asked for delivery",
+  delivery_request: "asked for the test to be run",
+  accepted: "accepted the work and queued the test",
   delivery: "delivered",
+  test_completed: "Test completed",
+  test_not_run: "Test could not be run",
   refusal: "refused",
   payment_confirmed: "Payment confirmed",
   payment_failed: "Payment failed",

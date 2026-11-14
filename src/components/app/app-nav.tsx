@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   ArrowLeftRight,
   CircleCheck,
+  ClipboardCheck,
   Compass,
   FolderGit2,
   Handshake,
@@ -24,6 +25,7 @@ const BUYING: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/projects", label: "Projects", icon: FolderGit2 },
   { href: "/engagements", label: "Engagements", icon: Handshake },
+  { href: "/reports", label: "Test reports", icon: ClipboardCheck },
   { href: "/approvals", label: "Approvals", icon: CircleCheck },
   { href: "/wallets", label: "Wallets", icon: Wallet },
   { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },

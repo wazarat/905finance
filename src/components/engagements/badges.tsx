@@ -58,13 +58,13 @@ export function WalletStatusBadge({ status }: { status: WalletStatus }) {
 }
 
 /** Marks balances and wallets that have no real asset behind them. */
-export function SimulatedBadge({ className }: { className?: string }) {
+export function SimulatedBadge({ className, label = "Simulated" }: { className?: string; label?: string }) {
   return (
     <span
       className={cn(pill, "border-warn/30 bg-warn-dim text-warn", className)}
       title="No real asset or account is involved. Balances are kept by 905 Finance for demonstration."
     >
-      Simulated
+      {label}
     </span>
   );
 }
