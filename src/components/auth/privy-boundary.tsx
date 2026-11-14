@@ -12,8 +12,10 @@ export function PrivyBoundary({ appId, children }: { appId: string | null; child
   return (
     <PrivyProvider
       appId={appId}
+      // Sign-in methods are not listed here on purpose: Privy then offers exactly
+      // the methods enabled for the app in its dashboard. Naming one that is not
+      // enabled there makes the sign-in window fail.
       config={{
-        loginMethods: ["email", "google", "wallet"],
         appearance: {
           theme: "dark",
           accentColor: "#2bff88",

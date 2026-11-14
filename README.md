@@ -89,8 +89,10 @@ Import the repository in Vercel, then add these in **Project → Settings → En
 |----------|-------|
 | `DATABASE_URL` | A hosted Postgres connection string. Adding Neon from Vercel's **Storage** tab sets this for you. |
 | `SESSION_SECRET` | 32+ random characters (`openssl rand -base64 48`). |
-| `NEXT_PUBLIC_PRIVY_APP_ID`, `PRIVY_APP_SECRET` | From the Privy dashboard. Add your deployment's domain to the Privy app's allowed origins. |
+| `NEXT_PUBLIC_PRIVY_APP_ID`, `PRIVY_APP_SECRET` | From the Privy dashboard, for a Privy app dedicated to this site. |
 | `NEXT_PUBLIC_APP_URL` | The deployment's public URL. |
+
+In the Privy dashboard, add every origin the site is served from (for example `https://905finance.vercel.app` and `http://localhost:3000`) to the app's **allowed origins**, and enable the sign-in methods you want (email, Google, wallet). If the origin is missing, the Privy sign-in window shows "Something went wrong" and nothing reaches this app's server.
 
 Do **not** set `AUTH_MODE` on Vercel: development sign-in is refused in production.
 

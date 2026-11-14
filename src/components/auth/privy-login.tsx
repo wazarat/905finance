@@ -63,7 +63,7 @@ export function PrivyLogin({ next }: { next: string }) {
       >
         {!ready ? "Loading…" : phase === "exchanging" ? "Signing you in…" : "Continue"}
       </Button>
-      <p className="text-center text-xs text-muted-foreground">Email, Google or a crypto wallet.</p>
+      <p className="text-center text-xs text-muted-foreground">Secure sign-in provided by Privy.</p>
       {phase === "error" && message ? (
         <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm">
           <p className="text-destructive">{message}</p>
