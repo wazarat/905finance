@@ -16,8 +16,8 @@ The product is being built in seven milestones, one at a time.
 | 2 | Engagements and wallet architecture | **Complete** |
 | 3 | Purchasing agent and human controls | **Complete** |
 | 4 | Real software testing services | **Complete** |
-| 5 | Qatom integration | Not started |
-| 6 | GOAT Network and ERC-8004 | Not started |
+| 5 | Qatom: agent communication | **Built**; live run awaits a Qatom sign-in and catalog items |
+| 6 | GOAT Network: ERC-8004 identity and payment | Not started |
 | 7 | End-to-end integration and deployment | Not started |
 
 ### What works today (Milestone 1)
@@ -33,12 +33,12 @@ The product is being built in seven milestones, one at a time.
 
 ### What works today (Milestone 2)
 
-- Engagements: a buyer selects a seller for a project, and that selection is saved. An engagement has one seller and one payment rail for life.
+- Engagements: a buyer selects a seller for a project, and that selection is saved. An engagement has one seller for life, and pays on one network: GOAT.
 - A backend-enforced state machine: `DISCOVERING → SELLER_SELECTED → AUTHORIZED → WALLET_PROVISIONED → AWAITING_FUNDING → ACTIVE`, with `PAUSED_FOR_APPROVAL`, `COMPLETED`, `CANCELLED`, `EXPIRED` and `FAILED`.
 - Spending mandates: total budget, per-purchase limit, permitted services, testing scope and expiry, drafted freely and then explicitly authorized by the organization's owner.
-- One dedicated wallet per engagement, provisioned through a rail-specific wallet-provider interface.
-- A master account per rail, with funding of an engagement wallet as its own explicit, owner-only authorization. Authorizing a mandate never moves funds.
-- A wallets page showing master accounts and engagement wallets separately for each rail, with a ledger of every balance change.
+- One dedicated wallet per engagement, provisioned through a wallet-provider interface.
+- A master account, with funding of an engagement wallet as its own explicit, owner-only authorization. Authorizing a mandate never moves funds.
+- A wallets page showing the master account and every engagement wallet, with a ledger of every balance change.
 - A single gate that decides whether a purchasing agent may contact a seller: only for an ACTIVE engagement, only its selected seller.
 - Cancellation and deadline expiry, both of which end the agent's authority and leave any funds in place.
 
@@ -67,6 +67,24 @@ The product is being built in seven milestones, one at a time.
 - Nobody pays for a test that cannot run: the seller declines to quote, before any payment, when the project is not a bundled fixture, when no worker is online, or when no worker has the tool that test type needs.
 
 **The test execution is genuine; the payment for it is still simulated.** Every count and finding shown is taken from the testing tool's own machine-readable report. Where a tool has no notion of a test count (compilation, static analysis) the report shows none rather than a zero. A run that could not complete is reported as exactly that, and the purchase is shown as paid but not delivered.
+
+### What works today (Milestone 5)
+
+Every engagement uses two networks together, each for one job. They are not alternatives.
+
+| | Job | State |
+|---|---|---|
+| **Qatom** | Carries the conversation between the buyer's agent and the seller's agent. No money moves through it. | Built and tested against a stand-in for Qatom. Not yet run against Qatom itself. |
+| **GOAT Network** | Identifies the seller (ERC-8004) and is where every payment is made, in USD. | Payments are simulated until Milestone 6. |
+
+- **One settlement network.** A mandate no longer has a payment rail to choose: every engagement pays on GOAT, and a request naming any other network is refused.
+- **Linking a Qatom account.** An owner signs in at Qatom (on Qatom's pages, with PKCE); the application stores the resulting tokens encrypted and uses them only to send its agents' messages. Linking authorizes no payment.
+- **Messages over Qatom.** Each message is a checkout of the seller's *free* catalog item. Qatom delivers it to the seller's endpoint and hands the answer back in the same call.
+- **Signed both ways.** Qatom tells a seller that a message came through Qatom, not who sent it. So every message is signed by the engagement it belongs to, dated, and usable once; every reply is signed and tied to the message it answers. A reply that fails the check is not used.
+- **A seller that checks for itself.** The seller's agent accepts an order only after confirming, from the payment reference, that the purchase really was paid.
+- **Every message records its carrier.** The engagement page shows whether a message went over Qatom, with Qatom's transaction id, or over the in-app demo channel.
+
+Until a Qatom account is linked and a seller has a catalog item, agents reach the sample sellers over the in-app demo channel, which is labelled as such.
 
 ### What is deliberately not here yet
 
@@ -104,6 +122,8 @@ pnpm dev                     # http://localhost:3000
 | `AUTH_MODE` | Set to `dev` to enable development sign-in (see below). Leave empty otherwise. |
 | `NEXT_PUBLIC_APP_URL` | Public base URL of the app. |
 | `WORKER_TOKEN` | Shared secret the testing worker presents. At least 32 random characters (`openssl rand -hex 32`). While it is unset the worker endpoints refuse every request. |
+| `QATOM_FULFILMENT_TOKEN`, `QATOM_SELLER_ITEMS` | Optional. Turn on the Qatom channel for sample sellers. See [Qatom](#qatom). |
+| `QATOM_ACCOUNT_CLIENT_ID`, `QATOM_ACCOUNT_CLIENT_SECRET` | Optional. Let the seller endpoint confirm each delivery with Qatom. |
 
 Secrets live in `.env.local`, which is git-ignored. Never commit them.
 
@@ -162,6 +182,43 @@ Set `WORKER_APP_URL` if the application is not at `http://host.docker.internal:3
 
 Add `--drain` (`node src/main.mjs --drain`) to run the jobs that are waiting and then exit.
 
+## Qatom
+
+Qatom is the channel agents talk through. Nothing here needs a language model or any server beyond this application: the application itself is the client of Qatom's master MCP endpoint (`https://mcp.m.todaq.net/mcp`).
+
+```
+buyer's agent ── signs message ──▶ agent_checkout(free item) ──▶ Qatom
+                                                                  │  POST <seller endpoint>
+                                                                  │  Authorization: Bearer <item secret>
+                                                                  │  X-Qatom-Transaction-Id: <id>
+                                                                  ▼
+                              /api/qatom/seller/<slug>: secret ▸ Qatom sale ▸ signature ▸ once only ▸ active engagement
+                                                                  │
+buyer's agent ◀── verifies signed reply ◀── receipt ◀── Qatom ◀── signed reply
+```
+
+### What protects it
+
+- **No money can move through it.** Items are free, an agent here cannot approve anything at Qatom, and a checkout that asks for approval is treated as undelivered. Keep the Qatom agent wallet unfunded and nothing could be charged even by mistake.
+- **A delivery is believed only after five checks**: the item's secret; a Qatom transaction (confirmed with Qatom itself when the seller account's credentials are configured); a valid, recent signature from the engagement it names; that neither the transaction nor the message was served before; and that the engagement is active with this seller.
+- **Replies are verified, then still treated as untrusted.** A verified reply is the seller's words: the agent runtime validates its shape and the policy engine checks every figure in it against the mandate.
+- **Tokens are encrypted at rest** (AES-256-GCM) and never reach a page. Unlinking revokes them at Qatom and deletes them here.
+- **No silent fallback.** If Qatom cannot be reached, the message is not delivered and nothing is bought. A paid order that never reached the seller is sent again on the next run, and is run once.
+
+### Setting it up
+
+1. **Seller side** (the Qatom account that lists the items). Generate a secret (`openssl rand -hex 24`) and set it as `QATOM_FULFILMENT_TOKEN`. For each sample seller, print what to enter and create the item in the Qatom dashboard:
+
+   ```bash
+   pnpm qatom:item relay-qa "Relay QA" https://your-site.example
+   ```
+
+   Then set `QATOM_SELLER_ITEMS` to the item ids (`relay-qa:412,ledgerproof:413`) and redeploy. Optionally set `QATOM_ACCOUNT_CLIENT_ID` and `QATOM_ACCOUNT_CLIENT_SECRET` so every delivery is confirmed with Qatom.
+2. **Buyer side.** In the application, open Settings and choose **Connect Qatom**. You are sent to Qatom to sign in with the email of your existing Qatom account; no new account is needed. The first time anyone does this, the application registers itself with Qatom as an OAuth client for its own address.
+3. **Check.** Start an engagement with a sample seller and run the agent. The agent panel shows "Messages via Qatom", and each message in the conversation carries its Qatom transaction id.
+
+Qatom may ask for the owner's approval before running even a free item. If it does, the message is not delivered; setting an auto-approve limit in Qatom lets free items through.
+
 ## Deploying to Vercel
 
 Import the repository in Vercel, then add these in **Project → Settings → Environment Variables** before the first visit:
@@ -200,6 +257,7 @@ If a setting is missing, the server logs which one at startup. Public pages stil
 | `pnpm db:migrate` | Apply migrations |
 | `pnpm db:seed` | Seed the sample sellers (safe to re-run) |
 | `pnpm seller:activate <slug>` | Activate a listing awaiting review |
+| `pnpm qatom:item <slug> "<name>" <url>` | Print what to enter in the Qatom dashboard for a seller's catalog item |
 
 ## How it is put together
 
@@ -213,6 +271,8 @@ src/server/            authentication, permissions, data-access layer, audit
 src/server/wallets/    wallet-provider interface and the simulated provider
 src/server/payments/   payment-provider interface and the demo provider
 src/server/agent/      agent runtime, brain interface, seller transport and demo seller
+src/server/qatom/      Qatom account link, signed messages, MCP client, seller endpoint checks
+src/server/seller-agent/  the sample sellers' side of a conversation
 src/server/testing/    job queue, worker endpoints' logic, reports
 src/app/api/worker/    the two endpoints a testing worker calls
 worker/                the testing worker: runners for Vitest, Foundry and Slither, Dockerfile
@@ -246,8 +306,8 @@ Activating an engagement takes separate decisions, and no later step is implied 
 
 1. **Select a seller.** A person picks it. Nothing is contacted or created.
 2. **Authorize the mandate** (owner). Locks the budget, permitted services, scope and expiry, and creates the purchasing agent in an inactive state. No funds move.
-3. **Provision the wallet.** The engagement gets its own empty wallet on its rail.
-4. **Authorize funding** (owner). Moves a stated amount from the rail's master account into that wallet. After the mandate, seller, agent and wallet are re-checked, the engagement becomes ACTIVE.
+3. **Provision the wallet.** The engagement gets its own empty wallet.
+4. **Authorize funding** (owner). Moves a stated amount from the master account into that wallet. After the mandate, seller, agent and wallet are re-checked, the engagement becomes ACTIVE.
 
 A budget is permission to spend, not money, and a wallet balance is money, not permission. Both will have to cover a purchase.
 
@@ -260,7 +320,7 @@ The rules that matter most are enforced in the database as well as in code, so t
 
 Funding uses a per-attempt idempotency key, so a repeated submit cannot fund twice, and a failed transfer is recorded and never retried automatically.
 
-`src/server/wallets/provider.ts` defines the wallet-provider interface. `SimulatedWalletProvider` implements it for both rails today; real providers replace it per rail without touching the engagement logic.
+`src/server/wallets/provider.ts` defines the wallet-provider interface. `SimulatedWalletProvider` implements it today; the GOAT provider replaces it without touching the engagement logic.
 
 ### Purchases and the policy engine
 
@@ -274,7 +334,7 @@ Funding uses a per-attempt idempotency key, so a repeated submit cannot fund twi
 6. the per-purchase limit and the remaining budget allow it;
 7. the wallet has funds not already promised to another payment;
 8. spending capacity is reserved, in the same transaction as the checks;
-9. the payment is made through the rail's provider;
+9. the payment is made through the payment provider;
 10. the payment is verified independently;
 11. the outcome is recorded.
 
@@ -284,7 +344,7 @@ The agent (`src/server/agent/`) has exactly two tools: buy a permitted service, 
 
 The database backs this up: a trigger refuses any reservation that would exceed the budget or the per-purchase limit, another refuses any agent or seller message unless the engagement is ACTIVE and the seller is the selected one, payments can only be drawn on the wallet of their own engagement, and confirmed payments cannot be altered.
 
-`src/server/payments/provider.ts` defines the payment-provider interface. `DemoPaymentProvider` implements it for both rails today.
+`src/server/payments/provider.ts` defines the payment-provider interface. `DemoPaymentProvider` implements it today.
 
 ### Money
 
@@ -310,7 +370,7 @@ The suite runs the real migrations in an in-process Postgres and exercises the d
 - the engagement state machine: every allowed and forbidden transition, and terminal states being final;
 - the mandate, wallet and funding steps each requiring their own explicit, owner-only action;
 - wallet isolation: a different wallet per engagement, funding one never touching another, and the database refusing a second wallet, a reassigned wallet or a funding record that names another engagement's wallet;
-- rail separation, in code and in the database;
+- every engagement settling on GOAT, a request naming any other network being refused, and the retired rail staying sealed off in code and in the database;
 - funding safety: not above the master balance, once per idempotency key, no overdraw from simultaneous requests, nothing moved on provider failure;
 - the agent gate staying shut in every state but ACTIVE, for every seller but the selected one, and after cancellation or expiry;
 - the seller's organization being unable to see, authorize, fund or cancel a buyer's engagement;
@@ -321,5 +381,9 @@ The suite runs the real migrations in an in-process Postgres and exercises the d
 - approvals being owner-only, and a budget increase changing nothing but the budget;
 - the agent runtime: no activity before ACTIVE, only the selected seller, and agents or sellers that try to change the deal being refused;
 - testing: the seller declining before payment when a test cannot run; one job per paid purchase; claiming, leases, retries and giving up; reports refused when they contradict themselves, come from the wrong tool or the wrong worker; a report's text being unable to change a mandate; reports readable by the buying organization only; the worker endpoints refusing a missing or wrong token; and the worker passing none of its secrets to the tests it runs.
+
+- Qatom: linking being the owner's decision alone and refused on any mismatch; tokens encrypted and never shown; refresh spent once under simultaneous use; messages refused when altered, replayed, stale or claimed for another engagement; replies refused when forged, altered or swapped; the seller endpoint closed without its secret, serving each delivery once, and refusing what Qatom does not vouch for; an agent unable to approve anything at Qatom; and no silent change of channel on an outage.
+
+The Qatom suite runs against a stand-in built from Qatom's published behaviour, not against Qatom itself.
 
 The testing suite also **executes the real tools** against the bundled fixtures, through the same worker code and submission path the application uses, and asserts the figures they report (for example, Vitest: 6 tests, 5 passed, 1 failed). The Vitest cases always run; the Foundry and Slither cases run when those tools are on `PATH` and are skipped otherwise.

@@ -3,10 +3,13 @@ import { Suspense, type ReactNode } from "react";
 import Link from "next/link";
 import { PageSkeleton } from "@/components/app/page-skeleton";
 import { NotYetActive, PageHeader, Panel } from "@/components/app/page-header";
-import { ListingStatusBadge, NotConnectedBadge } from "@/components/sellers/badges";
+import { ListingStatusBadge } from "@/components/sellers/badges";
 import { Button } from "@/components/ui/button";
+import { NETWORK_ROLES } from "@/lib/capabilities";
 import { requireWorkspace } from "@/server/page-context";
+import { getQatomStatus } from "@/server/qatom/connection";
 import { EnableRoleForm } from "../enable-role-form";
+import { ConnectQatomForm, DisconnectQatomForm } from "./qatom-forms";
 
 export const metadata: Metadata = { title: "Settings" };
 
@@ -19,9 +22,19 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-async function SettingsContent() {
-  const { user, workspace } = await requireWorkspace();
+const NOTICES: Record<string, string> = {
+  connected: "Qatom account linked.",
+  cancelled: "The Qatom sign-in was cancelled. Nothing was linked.",
+  failed: "The Qatom sign-in could not be completed. Nothing was linked.",
+};
+
+async function SettingsContent({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const { actor, user, workspace } = await requireWorkspace();
   const isOwner = workspace.role === "owner";
+  const raw = (await searchParams).qatom;
+  const notice = typeof raw === "string" ? raw : "";
+  // Linking Qatom is for organizations that buy: it carries their agents' messages.
+  const qatom = workspace.buyerProfile ? await getQatomStatus(actor, workspace.organization.id) : null;
 
   return (
     <div className="space-y-8">
@@ -82,31 +95,86 @@ async function SettingsContent() {
         </div>
       </Panel>
 
-      <Panel title="Connections" action={<NotYetActive />}>
-        <dl className="-my-3 divide-y divide-border">
-          <Row label="Master funding wallet">
-            <NotConnectedBadge />
-          </Row>
-          <Row label="Qatom account">
-            <NotConnectedBadge />
-          </Row>
-          <Row label="GOAT Network wallet">
-            <NotConnectedBadge />
-          </Row>
-        </dl>
-        <p className="mt-4 text-sm text-muted-foreground">
-          Wallets and payment accounts are connected here once funding is available. Connecting an
-          account will never authorize spending by itself.
+      {qatom ? (
+        <Panel
+          title="Qatom"
+          description={`${NETWORK_ROLES.communication.role}. ${NETWORK_ROLES.communication.detail}`}
+        >
+          {NOTICES[notice] ? (
+            <p
+              className={
+                notice === "connected"
+                  ? "mb-5 rounded-lg border border-brand/30 bg-brand-dim px-4 py-3 text-sm text-foreground"
+                  : "mb-5 rounded-lg border border-warn/30 bg-warn-dim px-4 py-3 text-sm text-foreground"
+              }
+            >
+              {NOTICES[notice]}
+            </p>
+          ) : null}
+          {qatom.connected || qatom.needsReconnect ? (
+            <>
+              <dl className="-my-3 divide-y divide-border">
+                <Row label="Status">
+                  {qatom.connected ? (
+                    <span className="text-brand">Linked</span>
+                  ) : (
+                    <span className="text-warn">
+                      Sign-in expired{qatom.lastError ? `: ${qatom.lastError}` : ""}
+                    </span>
+                  )}
+                </Row>
+                <Row label="Qatom account">{qatom.email ?? "Not reported by Qatom"}</Row>
+                <Row label="Agent twin">
+                  <span className="figure break-all">{qatom.agentTwin ?? "Not reported by Qatom"}</span>
+                </Row>
+                <Row label="Primary twin">
+                  <span className="figure break-all">{qatom.primaryTwin ?? "Not reported by Qatom"}</span>
+                </Row>
+              </dl>
+              <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
+                Your agents send their messages to sellers through this account, using free catalog
+                items only. Linking it authorizes no payment: an agent here cannot approve a Qatom
+                charge, and payments are made on GOAT Network under each engagement&apos;s mandate.
+              </p>
+              {qatom.canManage ? (
+                <div className="mt-5 flex flex-wrap gap-3 border-t border-border pt-5">
+                  {qatom.needsReconnect ? <ConnectQatomForm label="Sign in to Qatom again" /> : null}
+                  <DisconnectQatomForm />
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <div className="space-y-4">
+              <p className="max-w-2xl text-sm leading-relaxed text-ink-soft">
+                Not linked. Until it is, your agents reach the sample sellers over the in-app demo
+                channel. Linking sends you to Qatom to sign in there; this application never sees
+                your Qatom sign-in. It authorizes no payment.
+              </p>
+              {qatom.canManage ? (
+                <ConnectQatomForm />
+              ) : (
+                <p className="text-sm text-muted-foreground">Only the organization&apos;s owner can link Qatom.</p>
+              )}
+            </div>
+          )}
+        </Panel>
+      ) : null}
+
+      <Panel title="GOAT Network" action={<NotYetActive />}>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          {NETWORK_ROLES.settlement.role}. {NETWORK_ROLES.settlement.detail} Wallets and payments are
+          simulated until the GOAT integration is connected. Connecting an account will never
+          authorize spending by itself.
         </p>
       </Panel>
     </div>
   );
 }
 
-export default function SettingsPage() {
+export default function SettingsPage({ searchParams }: PageProps<"/settings">) {
   return (
     <Suspense fallback={<PageSkeleton />}>
-      <SettingsContent />
+      <SettingsContent searchParams={searchParams} />
     </Suspense>
   );
 }

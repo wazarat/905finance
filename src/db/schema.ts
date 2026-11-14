@@ -899,6 +899,10 @@ export const agentMessages = pgTable(
     direction: messageDirection("direction").notNull(),
     kind: text("kind").notNull(),
     body: jsonb("body").$type<Record<string, unknown>>().notNull().default({}),
+    /** What carried the message between the two agents: "in_app" or "qatom". */
+    channel: text("channel").notNull().default("in_app"),
+    /** The carrier's own reference for the message, such as a Qatom transaction id. */
+    channelRef: text("channel_ref"),
     createdAt: createdAt(),
   },
   (t) => [
@@ -908,6 +912,77 @@ export const agentMessages = pgTable(
       sql`${t.direction} = 'platform' OR ${t.sellerProfileId} IS NOT NULL`,
     ),
   ],
+);
+
+// ---------------------------------------------------------------------------
+// Qatom: the channel agents talk through. No money moves through it.
+// ---------------------------------------------------------------------------
+
+export const qatomConnectionStatus = pgEnum("qatom_connection_status", ["connected", "needs_reconnect"]);
+
+/**
+ * The OAuth client this application registered with Qatom for one redirect
+ * address. A public client: it has no secret, and every sign-in uses PKCE.
+ */
+export const qatomOauthClients = pgTable("qatom_oauth_clients", {
+  redirectUri: text("redirect_uri").primaryKey(),
+  clientId: text("client_id").notNull(),
+  createdAt: createdAt(),
+});
+
+/**
+ * A buying organization's link to its Qatom account, made by its owner
+ * signing in at Qatom. The tokens are stored encrypted and are used for one
+ * thing: sending the organization's agents' messages through Qatom.
+ */
+export const qatomConnections = pgTable("qatom_connections", {
+  organizationId: uuid("organization_id")
+    .primaryKey()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  connectedBy: uuid("connected_by")
+    .notNull()
+    .references(() => users.id, { onDelete: "restrict" }),
+  clientId: text("client_id").notNull(),
+  /** Who signed in at Qatom, as Qatom reports it. Shown so the owner can see which account is linked. */
+  subject: text("subject").notNull().default(""),
+  email: text("email"),
+  primaryTwin: text("primary_twin"),
+  agentTwin: text("agent_twin"),
+  scope: text("scope").notNull().default(""),
+  /** AES-256-GCM ciphertext. Never returned by any query that feeds a page. */
+  accessTokenSealed: text("access_token_sealed").notNull(),
+  accessTokenExpiresAt: timestamp("access_token_expires_at", { withTimezone: true }).notNull(),
+  refreshTokenSealed: text("refresh_token_sealed"),
+  status: qatomConnectionStatus("status").notNull().default("connected"),
+  lastError: text("last_error"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+/**
+ * Every message a seller's endpoint has accepted from Qatom. One row per
+ * Qatom transaction and per message nonce, so the same message can never be
+ * served twice however many times it is delivered.
+ */
+export const qatomDispatches = pgTable(
+  "qatom_dispatches",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** Qatom's id for the sale that carried the message. */
+    transactionId: text("transaction_id").notNull().unique(),
+    sellerProfileId: uuid("seller_profile_id")
+      .notNull()
+      .references(() => sellerProfiles.id, { onDelete: "cascade" }),
+    engagementId: uuid("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "cascade" }),
+    action: text("action").notNull(),
+    nonce: text("nonce").notNull(),
+    /** True when the sale was confirmed with Qatom itself, not just by the shared header. */
+    confirmedWithQatom: boolean("confirmed_with_qatom").notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (t) => [unique("qatom_dispatches_nonce_uq").on(t.engagementId, t.nonce)],
 );
 
 // ---------------------------------------------------------------------------
@@ -1084,6 +1159,7 @@ export type PaymentAttempt = typeof paymentAttempts.$inferSelect;
 export type PaymentTransaction = typeof paymentTransactions.$inferSelect;
 export type ApprovalRequest = typeof approvalRequests.$inferSelect;
 export type AgentMessage = typeof agentMessages.$inferSelect;
+export type QatomConnection = typeof qatomConnections.$inferSelect;
 export type TestingJob = typeof testingJobs.$inferSelect;
 export type TestingResult = typeof testingResults.$inferSelect;
 export type Finding = typeof findings.$inferSelect;

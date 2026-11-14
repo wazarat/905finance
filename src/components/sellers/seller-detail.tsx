@@ -140,7 +140,11 @@ export function SellerDetail({
             <FactRow label="Agent communication">
               <span className="flex flex-col items-end gap-1">
                 <span>{NETWORK_ROLES.communication.name}</span>
-                <span className="text-xs text-muted-foreground">Not connected yet</span>
+                <span className="text-xs text-muted-foreground">
+                  {seller.qatomCatalogItemId !== null
+                    ? `Catalog item ${seller.qatomCatalogItemId}`
+                    : "No catalog item yet"}
+                </span>
               </span>
             </FactRow>
             <FactRow label="Agent endpoint">

@@ -16,11 +16,13 @@ import { getEngagementActivity } from "@/server/engagement-activity";
 import {
   authorizeEngagement,
   authorizeFunding,
+  cancelEngagement,
   createEngagement,
   provisionEngagementWallet,
   saveMandateDraft,
 } from "@/server/engagements";
 import { createProject } from "@/server/projects";
+import { answerAsSampleSeller } from "@/server/seller-agent/service";
 import { createOffering, saveSellerEndpoint, updateSellerListing } from "@/server/sellers";
 import {
   JOB_LEASE_MS,
@@ -52,6 +54,7 @@ import {
   addMember,
   createUser,
   fixtureProject,
+  markSample,
   platformActivate,
   registerWorker,
   useTestDatabase,
@@ -109,6 +112,7 @@ async function createSeller(label: string, capabilities: string[]): Promise<Sell
     offering[capability] = created.id;
   }
   await platformActivate(db, ws.sellerProfile!.slug);
+  await markSample(db, ws.sellerProfile!.slug);
   return { owner, org, slug: ws.sellerProfile!.slug, id: ws.sellerProfile!.id, offering };
 }
 
@@ -303,6 +307,119 @@ describe("nobody pays for a test that cannot run", () => {
 
   it("does not offer Solidity testing against a project with no contracts", async () => {
     expect(await workerSupport(NODE, "foundry_unit")).toBe("unsupported");
+  });
+});
+
+describe("the sample seller's agent", () => {
+  /** A paid purchase that the seller has not yet been asked to run. */
+  async function paidButUnordered() {
+    const engagementId = await engage(acme, relay, acme.node);
+    // A seller channel that quotes honestly but never passes the order on.
+    setSellerTransportResolver((context) => ({
+      description: "test channel",
+      simulated: true,
+      async send(message) {
+        return message.kind === "quote_request"
+          ? answerAsSampleSeller(context.engagementId, message)
+          : { kind: "refusal", reason: "held back by the test" };
+      },
+    }));
+    await run(acme, engagementId, buying(relay, ["unit_testing"]));
+    setSellerTransportResolver((context) => new DemoSellerTransport(context));
+    const [purchase] = await purchasesOf(engagementId);
+    const [payment] = await db
+      .select()
+      .from(schema.paymentTransactions)
+      .where(eq(schema.paymentTransactions.purchaseId, purchase.id));
+    return { engagementId, purchase, paymentReference: payment.providerRef };
+  }
+  const order = (purchase: { id: string; serviceOfferingId: string }, paymentReference: string) => ({
+    kind: "delivery_request" as const,
+    purchaseId: purchase.id,
+    offeringId: purchase.serviceOfferingId,
+    paymentReference,
+  });
+
+  it("starts work only for a payment it can confirm itself", async () => {
+    const { engagementId, purchase, paymentReference } = await paidButUnordered();
+    expect(purchase.status).toBe("paid");
+
+    for (const claimed of ["", "paid, trust me", `${paymentReference}x`, paymentReference.slice(0, -1)]) {
+      const reply = await answerAsSampleSeller(engagementId, order(purchase, claimed));
+      expect(reply, claimed).toMatchObject({ kind: "refusal" });
+    }
+    expect(await jobsOf(engagementId)).toEqual([]);
+
+    const accepted = await answerAsSampleSeller(engagementId, order(purchase, paymentReference));
+    expect(accepted).toMatchObject({ kind: "accepted", purchaseId: purchase.id });
+    expect(await jobsOf(engagementId)).toHaveLength(1);
+  });
+
+  it("does not run one engagement's order for another, or for a different service", async () => {
+    const { engagementId, purchase, paymentReference } = await paidButUnordered();
+    const other = await engage(acme, relay, acme.node);
+    expect(await answerAsSampleSeller(other, order(purchase, paymentReference))).toMatchObject({
+      kind: "refusal",
+    });
+    expect(
+      await answerAsSampleSeller(engagementId, {
+        ...order(purchase, paymentReference),
+        offeringId: relay.offering.regression_testing,
+      }),
+    ).toMatchObject({ kind: "refusal" });
+    // A purchase that was never paid for.
+    const [blocked] = await db
+      .insert(schema.purchases)
+      .values({
+        engagementId,
+        serviceOfferingId: relay.offering.unit_testing,
+        offeringName: "Run unit_testing",
+        asset: "SIM-USD",
+        amountUnits: 1000n,
+        recipient: "nowhere",
+        idempotencyKey: randomUUID(),
+        status: "blocked",
+      })
+      .returning();
+    expect(await answerAsSampleSeller(engagementId, order(blocked, paymentReference))).toMatchObject({
+      kind: "refusal",
+    });
+    expect(await jobsOf(engagementId)).toEqual([]);
+    expect(await jobsOf(other)).toEqual([]);
+  });
+
+  it("answers only for an active engagement it is the seller of", async () => {
+    const quote = { kind: "quote_request" as const, offeringId: relay.offering.unit_testing, quantity: 1 };
+    const engagementId = await engage(acme, relay, acme.node);
+    expect(await answerAsSampleSeller(engagementId, quote)).toMatchObject({ kind: "quote", amountUnits: "1000" });
+    // Another seller's service, an unknown engagement, and an engagement that has ended.
+    expect(
+      await answerAsSampleSeller(engagementId, { ...quote, offeringId: ledger.offering.foundry_unit }),
+    ).toMatchObject({ kind: "refusal" });
+    expect(await answerAsSampleSeller(randomUUID(), quote)).toMatchObject({ kind: "refusal" });
+    expect(await answerAsSampleSeller("not-an-id", quote)).toMatchObject({ kind: "refusal" });
+    await cancelEngagement(acme.owner, engagementId);
+    expect(await answerAsSampleSeller(engagementId, quote)).toMatchObject({ kind: "refusal" });
+  });
+
+  it("reports how an order is going, to the engagement that placed it", async () => {
+    const { engagementId, job } = await queuedJob();
+    const ask = { kind: "status_request" as const, purchaseId: job.purchaseId };
+    expect(await answerAsSampleSeller(engagementId, ask)).toEqual({
+      kind: "status",
+      purchaseId: job.purchaseId,
+      jobId: job.id,
+      state: "queued",
+      summary: undefined,
+    });
+    await checkIn("worker-a", NODE_PAIRS);
+    await submitTestingResult(job.id, { workerId: "worker-a", result: failingReport() });
+    expect(await answerAsSampleSeller(engagementId, ask)).toMatchObject({
+      state: "completed",
+      summary: "Vitest ran 6 tests: 5 passed, 1 failed.",
+    });
+    const other = await engage(acme, relay, acme.node);
+    expect(await answerAsSampleSeller(other, ask)).toMatchObject({ kind: "refusal" });
   });
 });
 

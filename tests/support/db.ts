@@ -85,6 +85,11 @@ export async function platformActivate(db: Db, slug: string): Promise<void> {
     .where(eq(schema.sellerProfiles.slug, slug));
 }
 
+/** Flag a listing as one of the platform's own sample sellers, whose agent the platform answers for. */
+export async function markSample(db: Db, slug: string): Promise<void> {
+  await db.update(schema.sellerProfiles).set({ isSample: true }).where(eq(schema.sellerProfiles.slug, slug));
+}
+
 /** A bundled-fixture project: the only kind the testing worker can run against. */
 export const fixtureProject = {
   name: "Ordering service",

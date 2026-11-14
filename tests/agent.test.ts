@@ -34,6 +34,7 @@ import {
   addMember,
   createUser,
   fixtureProject,
+  markSample,
   platformActivate,
   registerWorker,
   useTestDatabase,
@@ -61,7 +62,7 @@ const SERVICES = [
   { price: 25, name: "Regression suite", capability: "regression_testing" },
 ] as const;
 
-async function createSeller(label: string): Promise<Seller> {
+async function createSeller(label: string, sample = true): Promise<Seller> {
   const owner = await createUser(db, `${label}-owner`);
   const ws = await completeOnboarding(owner, {
     displayName: `${label} owner`,
@@ -89,6 +90,7 @@ async function createSeller(label: string): Promise<Seller> {
     offering[service.price] = created.id;
   }
   await platformActivate(db, ws.sellerProfile!.slug);
+  if (sample) await markSample(db, ws.sellerProfile!.slug);
   return { owner, org, slug: ws.sellerProfile!.slug, id: ws.sellerProfile!.id, offering };
 }
 
@@ -215,8 +217,8 @@ beforeAll(async () => {
   await addMember(db, acme.org, acmeMember.userId, "member");
 });
 afterAll(async () => close());
-// These sellers are not flagged as samples, so tests connect them to the demo seller explicitly.
-// The demo seller only quotes for work a live testing worker can run, so one is on duty.
+// The sellers are sample sellers, reached over the in-app channel. A sample seller only
+// quotes for work a live testing worker can run, so one is on duty.
 beforeEach(async () => {
   setSellerTransportResolver((context) => new DemoSellerTransport(context));
   await registerWorker(
@@ -295,11 +297,23 @@ describe("who may start the agent", () => {
 
   it("cannot run against a seller whose agent is not connected", async () => {
     setSellerTransportResolver(undefined);
-    const id = await engage(acme, alpha);
+    // Not one of the platform's sample sellers, so nothing answers for it.
+    const outsider = await createSeller("outsider", false);
+    const id = await engage(acme, outsider);
     const error = await run(acme.owner, id).catch((e) => e);
     expect(error).toMatchObject({ code: "conflict" });
     expect(error.message).toContain("not connected");
     expect(await messagesOf(id)).toEqual([]);
+  });
+
+  it("gets no answer from the platform on behalf of a seller that is not its own", async () => {
+    // Even if a channel were wired to it, the platform's seller agent speaks only for sample sellers.
+    const outsider = await createSeller("unanswered", false);
+    const id = await engage(acme, outsider);
+    const result = await run(acme.owner, id);
+    expect(result.run.purchasesCompleted).toBe(0);
+    expect(result.run.summary).toContain("not available");
+    expect(await paidPurchases(id)).toEqual([]);
   });
 });
 

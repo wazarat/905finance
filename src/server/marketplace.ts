@@ -3,6 +3,7 @@ import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import type { BillingUnit, EndpointProtocol, ListingStatus } from "@/db/schema";
 import { isWeb3Capability } from "@/lib/capabilities";
+import { qatomItemFor } from "./qatom/config";
 
 const { sellerProfiles, serviceOfferings, serviceEndpoints } = schema;
 
@@ -45,6 +46,8 @@ export type PublicSellerDetail = PublicSeller & {
   offerings: PublicOffering[];
   /** How the seller's agent is reached. The address itself is never public. */
   endpointProtocol: EndpointProtocol | null;
+  /** The seller's Qatom catalog item, when its agent can be reached over Qatom. Public on Qatom already. */
+  qatomCatalogItemId: number | null;
 };
 
 const publicSellerColumns = {
@@ -140,6 +143,7 @@ export async function loadPublicSellerDetail(sellerProfileId: string): Promise<P
     ...toPublicSeller(row, offerings),
     offerings: offerings.map(toPublicOffering),
     endpointProtocol: endpoint?.protocol ?? null,
+    qatomCatalogItemId: qatomItemFor(row.slug),
   };
 }
 

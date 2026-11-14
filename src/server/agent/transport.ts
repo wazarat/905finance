@@ -1,15 +1,18 @@
 import "server-only";
+import type { DbOrTx } from "@/db/client";
 import type { PaymentRail, Project, SellerProfile, ServiceOffering } from "@/db/schema";
-import { offeringPriceUnits } from "../budget";
-import { isAppError } from "../errors";
-import { simulatedRecipient } from "../payments/registry";
-import { enqueueTestingJob, fulfilmentBlocker } from "../testing/jobs";
+import { qatomItemFor } from "../qatom/config";
+import { hasUsableQatomConnection } from "../qatom/connection";
+import { QatomSellerTransport } from "../qatom/transport";
+import { answerAsSampleSeller } from "../seller-agent/service";
 import type { AssetInfo } from "@/lib/units";
 
 /** A message from an engagement's agent to its seller. */
 export type AgentToSeller =
   | { kind: "quote_request"; offeringId: string; quantity: number }
-  | { kind: "delivery_request"; purchaseId: string; offeringId: string; paymentReference: string };
+  | { kind: "delivery_request"; purchaseId: string; offeringId: string; paymentReference: string }
+  /** Ask how an order the seller accepted is going. */
+  | { kind: "status_request"; purchaseId: string };
 
 /** What a seller sends back. Everything in it is treated as untrusted data. */
 export type SellerReply =
@@ -25,6 +28,13 @@ export type SellerReply =
     }
   /** The seller has taken the paid work on. Results follow when the work is done. */
   | { kind: "accepted"; purchaseId: string; jobId: string }
+  | {
+      kind: "status";
+      purchaseId: string;
+      jobId: string;
+      state: "queued" | "running" | "completed" | "failed";
+      summary?: string;
+    }
   | { kind: "delivery"; purchaseId: string; result: Record<string, unknown> }
   | { kind: "refusal"; reason: string };
 
@@ -32,82 +42,77 @@ export type SellerReply =
 export interface SellerTransport {
   /** Shown to the buyer so it is clear what is on the other end. */
   readonly description: string;
+  /** True when the carrying of messages is a stand-in rather than a real network. */
   readonly simulated: boolean;
+  /** What carries the messages. Defaults to the in-app channel. */
+  readonly channel?: "in_app" | "qatom";
   send(message: AgentToSeller): Promise<SellerReply>;
+  /** The carrier's own reference for the message just sent, if it gives one. */
+  takeReference?(): string | null;
 }
 
 export type SellerTransportContext = {
-  seller: Pick<SellerProfile, "id" | "displayName" | "isSample">;
+  /** The engagement the conversation belongs to. */
+  engagementId: string;
+  /** The buying organization, whose Qatom account carries the messages when it is linked. */
+  organizationId: string;
+  seller: Pick<SellerProfile, "id" | "slug" | "displayName" | "isSample">;
   offerings: ServiceOffering[];
   /** The project the engagement is for. */
   project: Pick<Project, "sourceType" | "fixtureKey">;
   rail: PaymentRail;
   asset: AssetInfo;
+  /** The transaction the caller is in, if any, so that lookups here join it rather than wait on it. */
+  db?: DbOrTx;
 };
 
 /**
- * The controlled demo seller. It answers for the platform's sample listings
- * only, and the conversation with it happens inside the application.
+ * The in-app channel to the platform's sample sellers. The conversation
+ * never leaves the application: a message is handed straight to the sample
+ * seller's agent, which checks it against the platform's records exactly as
+ * it would a message arriving from outside.
  *
- * The testing it sells is real: a paid purchase becomes a job for the
- * platform's testing worker, which executes the test and reports what
- * happened. So that nobody pays for a test that cannot run, it declines to
- * quote unless a live worker can run that test type against the project.
- * It never states a result itself.
+ * The testing it sells is real: an accepted order becomes a job for the
+ * testing worker. Only the carrying of messages is a stand-in.
  */
 export class DemoSellerTransport implements SellerTransport {
   readonly description =
-    "Demo seller agent run by 905 Finance. Tests it sells are executed by the platform's testing worker.";
+    "In-app demo channel to a sample seller run by 905 Finance. Tests it sells are executed by the platform's testing worker.";
   readonly simulated = true;
 
   constructor(private readonly context: SellerTransportContext) {}
 
   async send(message: AgentToSeller): Promise<SellerReply> {
-    const offering = this.context.offerings.find((o) => o.id === message.offeringId && o.isActive);
-    if (!offering) return { kind: "refusal", reason: "That service is not on offer." };
-
-    if (message.kind === "quote_request") {
-      const price = offeringPriceUnits(offering, this.context.asset, message.quantity);
-      if (price === null) return { kind: "refusal", reason: "That service cannot be priced." };
-      const blocker = await fulfilmentBlocker(this.context.project, offering.capability);
-      if (blocker) return { kind: "refusal", reason: blocker };
-      return {
-        kind: "quote",
-        offeringId: offering.id,
-        quantity: message.quantity,
-        asset: this.context.asset.code,
-        amountUnits: price.toString(),
-        recipient: simulatedRecipient(this.context.rail, this.context.seller.id),
-      };
-    }
-
-    try {
-      // The job is built from the platform's own record of the purchase.
-      const job = await enqueueTestingJob(message.purchaseId);
-      return { kind: "accepted", purchaseId: message.purchaseId, jobId: job.id };
-    } catch (error) {
-      if (!isAppError(error)) console.error("Could not queue a testing job", error);
-      return {
-        kind: "refusal",
-        reason: isAppError(error) ? error.message : "The test could not be queued.",
-      };
-    }
+    return answerAsSampleSeller(this.context.engagementId, message);
   }
 }
 
-type Resolver = (context: SellerTransportContext) => SellerTransport | null;
+type Resolver = (
+  context: SellerTransportContext,
+) => SellerTransport | null | Promise<SellerTransport | null>;
 
-const defaultResolver: Resolver = (context) =>
-  context.seller.isSample ? new DemoSellerTransport(context) : null;
+/**
+ * Qatom carries the conversation when both ends are ready for it: the seller
+ * has a Qatom catalog item, and the buying organization has linked its Qatom
+ * account. Otherwise a sample seller is reached over the in-app channel, and
+ * any other seller cannot be reached at all.
+ */
+const defaultResolver: Resolver = async (context) => {
+  const catalogItemId = qatomItemFor(context.seller.slug);
+  if (catalogItemId !== null && (await hasUsableQatomConnection(context.organizationId, context.db))) {
+    return new QatomSellerTransport({
+      engagementId: context.engagementId,
+      organizationId: context.organizationId,
+      catalogItemId,
+    });
+  }
+  return context.seller.isSample ? new DemoSellerTransport(context) : null;
+};
 
 let resolver: Resolver = defaultResolver;
 
-/**
- * The transport for a seller, or null when the seller's agent cannot be
- * reached yet. Only the platform's sample sellers are connected for now,
- * through the demo seller; calling real seller endpoints comes later.
- */
-export function resolveSellerTransport(context: SellerTransportContext): SellerTransport | null {
+/** The channel to a seller, or null when the seller's agent cannot be reached. */
+export async function resolveSellerTransport(context: SellerTransportContext): Promise<SellerTransport | null> {
   return resolver(context);
 }
 

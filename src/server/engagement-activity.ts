@@ -59,6 +59,9 @@ export type MessageLine = {
   direction: MessageDirection;
   kind: string;
   body: Record<string, unknown>;
+  /** What carried the message, and the carrier's reference for it. */
+  channel: string;
+  channelRef: string | null;
   createdAt: Date;
 };
 
@@ -73,7 +76,7 @@ export type EngagementActivity = {
   messages: MessageLine[];
   lastRun: AgentRun | null;
   /** How the seller's agent is reached, or null when it is not connected. */
-  sellerConnection: { description: string; simulated: boolean } | null;
+  sellerConnection: { description: string; simulated: boolean; channel: "in_app" | "qatom" } | null;
   /** Whether the tests this engagement may buy can be executed right now. Null when no seller is connected. */
   testing: {
     workerOnline: boolean;
@@ -169,7 +172,15 @@ export async function getEngagementActivity(
     .where(eq(serviceOfferings.sellerProfileId, seller.id));
   const transport =
     engagement.rail && budget
-      ? resolveSellerTransport({ seller, offerings, project, rail: engagement.rail, asset: budget.asset })
+      ? await resolveSellerTransport({
+          engagementId: engagement.id,
+          organizationId: engagement.organizationId,
+          seller,
+          offerings,
+          project,
+          rail: engagement.rail,
+          asset: budget.asset,
+        })
       : null;
 
   let testing: EngagementActivity["testing"] = null;
@@ -229,11 +240,17 @@ export async function getEngagementActivity(
       direction: m.direction,
       kind: m.kind,
       body: m.body,
+      channel: m.channel,
+      channelRef: m.channelRef,
       createdAt: m.createdAt,
     })),
     lastRun: lastRun ?? null,
     sellerConnection: transport
-      ? { description: transport.description, simulated: transport.simulated }
+      ? {
+          description: transport.description,
+          simulated: transport.simulated,
+          channel: transport.channel ?? "in_app",
+        }
       : null,
     can: {
       operate: roleHasPermission(membership.role, "engagement.operate"),

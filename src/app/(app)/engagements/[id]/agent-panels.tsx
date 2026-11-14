@@ -207,14 +207,31 @@ export function AgentPanel({
     <Panel
       title="Purchasing agent"
       description={`Buys permitted services from ${sellerName}, one purchase at a time, inside the mandate.`}
-      action={sellerConnection?.simulated ? <SimulatedBadge /> : null}
+      action={
+        sellerConnection?.channel === "qatom" ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-brand/30 bg-brand-dim px-2.5 py-0.5 text-xs font-medium whitespace-nowrap text-brand">
+            Messages via Qatom
+          </span>
+        ) : sellerConnection?.simulated ? (
+          <SimulatedBadge label="In-app demo channel" />
+        ) : null
+      }
     >
       <div className="space-y-5">
         <dl className="grid gap-4 text-sm sm:grid-cols-2">
           <div>
-            <dt className="text-muted-foreground">Seller connection</dt>
+            <dt className="text-muted-foreground">Agent communication</dt>
             <dd className="mt-0.5 text-foreground">
               {sellerConnection ? sellerConnection.description : "Not connected"}
+              {sellerConnection?.channel === "in_app" ? (
+                <span className="mt-1 block text-sm text-muted-foreground">
+                  Messages go over Qatom instead once your Qatom account is linked in{" "}
+                  <Link href="/settings" className="underline underline-offset-4 hover:text-foreground">
+                    Settings
+                  </Link>{" "}
+                  and this seller has a Qatom catalog item.
+                </span>
+              ) : null}
             </dd>
           </div>
           <div>
@@ -437,6 +454,17 @@ export function ConversationPanel({
                     {who}
                   </span>{" "}
                   {what}
+                  {message.channel === "qatom" ? (
+                    <span className="mt-0.5 block text-xs text-muted-foreground">
+                      via Qatom
+                      {message.channelRef ? (
+                        <>
+                          {" · transaction "}
+                          <span className="figure break-all">{message.channelRef}</span>
+                        </>
+                      ) : null}
+                    </span>
+                  ) : null}
                 </span>
               </li>
             );

@@ -15,7 +15,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
-    "seller:activate": "tsx scripts/activate-seller.ts"
+    "seller:activate": "tsx scripts/activate-seller.ts",
+    "qatom:item": "tsx scripts/qatom-item.ts"
   },
   "dependencies": {
     "@privy-io/node": "^0.39.0",

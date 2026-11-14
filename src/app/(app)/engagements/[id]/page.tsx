@@ -304,7 +304,7 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
       {seller.isSample ? (
         <p className="rounded-xl border border-warn/30 bg-warn-dim px-5 py-3 text-sm text-ink-soft">
           <span className="font-medium text-foreground">Sample seller.</span> This engagement is a
-          demonstration. No outside provider is contacted and no real funds exist or move. The
+          demonstration: the seller is run by 905 Finance and no real funds exist or move. The
           tests it buys are executed for real by the platform's testing worker.
         </p>
       ) : null}

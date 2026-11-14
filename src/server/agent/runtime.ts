@@ -31,6 +31,8 @@ const {
   purchases,
   approvalRequests,
   projects,
+  paymentTransactions,
+  testingJobs,
 } = schema;
 
 /**
@@ -85,6 +87,13 @@ const sellerReply = z.discriminatedUnion("kind", [
     jobId: z.string().max(100),
   }),
   z.object({
+    kind: z.literal("status"),
+    purchaseId: z.string().max(100),
+    jobId: z.string().max(100),
+    state: z.enum(["queued", "running", "completed", "failed"]),
+    summary: z.string().max(500).optional(),
+  }),
+  z.object({
     kind: z.literal("delivery"),
     purchaseId: z.string().max(100),
     result: z.record(z.string(), z.unknown()),
@@ -129,6 +138,7 @@ async function exchange(
   message: AgentToSeller,
 ): Promise<SellerReply> {
   await assertAgentMayContactSeller(engagementId, setup.sellerProfileId);
+  const channel = setup.transport.channel ?? "in_app";
   await getDb().insert(agentMessages).values({
     engagementId,
     agentRunId: setup.run.id,
@@ -136,6 +146,7 @@ async function exchange(
     direction: "agent_to_seller",
     kind: message.kind,
     body: message,
+    channel,
   });
 
   let reply: SellerReply;
@@ -155,8 +166,44 @@ async function exchange(
     direction: "seller_to_agent",
     kind: reply.kind,
     body: reply,
+    channel,
+    channelRef: setup.transport.takeReference?.() ?? null,
   });
   return reply;
+}
+
+/** The provider's reference for a purchase's confirmed payment: what the seller checks before starting work. */
+async function paymentReferenceOf(purchaseId: string): Promise<string> {
+  const [payment] = await getDb()
+    .select({ providerRef: paymentTransactions.providerRef })
+    .from(paymentTransactions)
+    .where(eq(paymentTransactions.purchaseId, purchaseId));
+  return payment?.providerRef ?? "";
+}
+
+/**
+ * Orders the buyer has paid for that the seller has not taken on. Sending one
+ * again is safe: the seller queues a purchase at most once.
+ */
+async function resendUnacknowledgedOrders(
+  setup: RunSetup & { transport: SellerTransport },
+  engagementId: string,
+): Promise<void> {
+  const pending = await getDb()
+    .select({ purchase: purchases })
+    .from(purchases)
+    .leftJoin(testingJobs, eq(testingJobs.purchaseId, purchases.id))
+    .where(and(eq(purchases.engagementId, engagementId), eq(purchases.status, "paid"), isNull(testingJobs.id)))
+    .orderBy(asc(purchases.sequence))
+    .limit(5);
+  for (const { purchase } of pending) {
+    await exchange(setup, engagementId, {
+      kind: "delivery_request",
+      purchaseId: purchase.id,
+      offeringId: purchase.serviceOfferingId,
+      paymentReference: await paymentReferenceOf(purchase.id),
+    });
+  }
 }
 
 /** What the brain is shown. Built fresh from platform records before every step. */
@@ -286,7 +333,16 @@ async function startRun(
       .where(eq(serviceOfferings.sellerProfileId, seller.id));
     const [project] = await tx.select().from(projects).where(eq(projects.id, engagement.projectId));
     const asset = { code: mandate.asset, decimals: mandate.assetDecimals };
-    const transport = resolveSellerTransport({ seller, offerings, project, rail: engagement.rail, asset });
+    const transport = await resolveSellerTransport({
+      engagementId: engagement.id,
+      organizationId: engagement.organizationId,
+      seller,
+      offerings,
+      project,
+      rail: engagement.rail,
+      asset,
+      db: tx,
+    });
     if (!transport) {
       throw conflict(
         `${seller.displayName}'s agent is not connected yet. In this version the purchasing agent can only run against the sample sellers.`,
@@ -348,6 +404,14 @@ export async function runAgent(
   const setup = await startRun(actor, engagementId, input.runKey, brain);
   if (setup.replayed || !setup.transport) return { run: setup.run, replayed: true };
   const live = { ...setup, transport: setup.transport };
+
+  // An order that was paid for but never reached the seller (the channel
+  // failed after payment) is sent again before anything new is bought.
+  try {
+    await resendUnacknowledgedOrders(live, engagementId);
+  } catch (error) {
+    if (!isAppError(error)) console.error("Could not resend pending orders", error);
+  }
 
   let completed = 0;
   let refused = 0;
@@ -454,7 +518,7 @@ export async function runAgent(
           kind: "delivery_request",
           purchaseId: outcome.purchase.id,
           offeringId: outcome.purchase.serviceOfferingId,
-          paymentReference: outcome.purchase.idempotencyKey,
+          paymentReference: await paymentReferenceOf(outcome.purchase.id),
         });
         // "accepted" means the work is queued: the purchase stays paid and
         // undelivered until the testing worker reports what actually happened.
