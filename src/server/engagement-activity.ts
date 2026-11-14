@@ -1,13 +1,21 @@
 import "server-only";
 import { asc, desc, eq } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
-import type { AgentRun, MessageDirection, PurchaseStatus } from "@/db/schema";
+import type {
+  AgentRun,
+  MessageDirection,
+  PurchaseStatus,
+  TestingJobStatus,
+  TestingOutcome,
+} from "@/db/schema";
+import { describeResult } from "@/lib/testing";
 import type { AssetInfo } from "@/lib/units";
 import { resolveSellerTransport } from "./agent/transport";
 import { toApprovalSummary, type ApprovalSummary } from "./approvals";
 import { assertAuthenticated, isUuid, requirePermissionOnRecord, roleHasPermission, type Actor } from "./authz";
 import { getBudgetStatus, offeringPriceUnits, type BudgetStatus } from "./budget";
 import { notFound } from "./errors";
+import { fulfilmentBlocker, getWorkerStatus } from "./testing/jobs";
 
 const {
   engagements,
@@ -20,6 +28,8 @@ const {
   approvalRequests,
   agentMessages,
   agentRuns,
+  testingJobs,
+  testingResults,
 } = schema;
 
 export type PurchaseLine = {
@@ -32,6 +42,14 @@ export type PurchaseLine = {
   message: string | null;
   paymentReference: string | null;
   deliverySummary: string | null;
+  /** The test this purchase paid for, once it has been queued. */
+  job: {
+    id: string;
+    status: TestingJobStatus;
+    outcome: TestingOutcome | null;
+    /** What the tool reported, or why the test did not run. Null while it is waiting. */
+    summary: string | null;
+  } | null;
   isSimulated: boolean;
   createdAt: Date;
 };
@@ -56,6 +74,11 @@ export type EngagementActivity = {
   lastRun: AgentRun | null;
   /** How the seller's agent is reached, or null when it is not connected. */
   sellerConnection: { description: string; simulated: boolean } | null;
+  /** Whether the tests this engagement may buy can be executed right now. Null when no seller is connected. */
+  testing: {
+    workerOnline: boolean;
+    services: Array<{ id: string; name: string; blocker: string | null }>;
+  } | null;
   can: { operate: boolean; approve: boolean };
 };
 
@@ -80,9 +103,16 @@ export async function getEngagementActivity(
   const asset: AssetInfo = budget?.asset ?? { code: "", decimals: 0 };
 
   const purchaseRows = await db
-    .select({ purchase: purchases, providerRef: paymentTransactions.providerRef })
+    .select({
+      purchase: purchases,
+      providerRef: paymentTransactions.providerRef,
+      job: testingJobs,
+      result: testingResults,
+    })
     .from(purchases)
     .leftJoin(paymentTransactions, eq(paymentTransactions.purchaseId, purchases.id))
+    .leftJoin(testingJobs, eq(testingJobs.purchaseId, purchases.id))
+    .leftJoin(testingResults, eq(testingResults.jobId, testingJobs.id))
     .where(eq(purchases.engagementId, engagement.id))
     .orderBy(desc(purchases.sequence))
     .limit(100);
@@ -139,12 +169,27 @@ export async function getEngagementActivity(
     .where(eq(serviceOfferings.sellerProfileId, seller.id));
   const transport =
     engagement.rail && budget
-      ? resolveSellerTransport({ seller, offerings, rail: engagement.rail, asset: budget.asset })
+      ? resolveSellerTransport({ seller, offerings, project, rail: engagement.rail, asset: budget.asset })
       : null;
+
+  let testing: EngagementActivity["testing"] = null;
+  if (transport) {
+    const services = [];
+    for (const { offering } of permitted) {
+      if (!offering.isActive) continue;
+      services.push({
+        id: offering.id,
+        name: offering.name,
+        blocker: await fulfilmentBlocker(project, offering.capability, db),
+      });
+    }
+    testing = { workerOnline: (await getWorkerStatus()).online, services };
+  }
 
   return {
     budget,
-    purchases: purchaseRows.map(({ purchase, providerRef }) => ({
+    testing,
+    purchases: purchaseRows.map(({ purchase, providerRef, job, result }) => ({
       id: purchase.id,
       offeringName: purchase.offeringName,
       quantity: purchase.quantity,
@@ -157,6 +202,22 @@ export async function getEngagementActivity(
         purchase.delivery && typeof purchase.delivery.summary === "string"
           ? purchase.delivery.summary
           : null,
+      job: job
+        ? {
+            id: job.id,
+            status: job.status,
+            outcome: result?.outcome ?? null,
+            // Findings are not loaded here; the summary of a static-analysis run comes from the stored delivery.
+            summary:
+              result && (result.testsTotal !== null || result.outcome === "error")
+                ? describeResult(result, [])
+                : typeof purchase.delivery?.summary === "string"
+                  ? purchase.delivery.summary
+                  : job.status === "failed"
+                    ? (job.failureReason ?? "The test did not complete.")
+                    : null,
+          }
+        : null,
       isSimulated: purchase.isSimulated,
       createdAt: purchase.createdAt,
     })),

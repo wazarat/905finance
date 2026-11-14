@@ -84,3 +84,35 @@ export async function platformActivate(db: Db, slug: string): Promise<void> {
     .set({ status: "active", activatedAt: new Date() })
     .where(eq(schema.sellerProfiles.slug, slug));
 }
+
+/** A bundled-fixture project: the only kind the testing worker can run against. */
+export const fixtureProject = {
+  name: "Ordering service",
+  description: "Sample ordering service",
+  sourceType: "fixture",
+  fixtureKey: "sample-node-api",
+  testingObjectives: "Find the failing tests",
+  hasWeb3: false,
+  testingAuthorized: true,
+} as const;
+
+/**
+ * Record a testing worker as having just checked in, able to run the given
+ * "fixture:capability" pairs. Stands in for a worker's heartbeat.
+ */
+export async function registerWorker(
+  db: Db,
+  supports: string[],
+  options: { workerId?: string; lastSeenAt?: Date } = {},
+): Promise<void> {
+  const row = {
+    workerId: options.workerId ?? "test-worker",
+    tools: { vitest: "test", forge: "test", slither: "test" },
+    supports,
+    lastSeenAt: options.lastSeenAt ?? new Date(),
+  };
+  await db
+    .insert(schema.testingWorkers)
+    .values(row)
+    .onConflictDoUpdate({ target: schema.testingWorkers.workerId, set: row });
+}

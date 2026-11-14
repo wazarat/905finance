@@ -103,7 +103,7 @@ function lastJsonObject(stdout) {
  * report the counts come from, so the log and the numbers cannot disagree.
  */
 export function transcribeForgeReport(report) {
-  const lines = [];
+  const lines = ["# Transcribed from the report produced by `forge test --json`.", ""];
   for (const [suite, suiteResult] of Object.entries(report ?? {})) {
     const tests = Object.entries(suiteResult?.test_results ?? {});
     lines.push(`Ran ${tests.length} ${tests.length === 1 ? "test" : "tests"} for ${suite}`);

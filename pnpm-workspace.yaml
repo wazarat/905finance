@@ -1,6 +1,3 @@
-packages:
-  - "."
-  - "worker"
 allowBuilds:
   sharp: false
   unrs-resolver: false

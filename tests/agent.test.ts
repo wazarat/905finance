@@ -33,11 +33,12 @@ import { depositSimulatedFunds } from "@/server/wallets";
 import {
   addMember,
   createUser,
+  fixtureProject,
   platformActivate,
+  registerWorker,
   useTestDatabase,
   validEndpoint,
   validListing,
-  validProject,
 } from "./support/db";
 
 let db: Db;
@@ -99,7 +100,7 @@ async function createBuyer(label: string): Promise<Buyer> {
     accountType: "business",
     roles: "buyer",
   });
-  const project = await createProject(owner, ws.organization.id, validProject);
+  const project = await createProject(owner, ws.organization.id, fixtureProject);
   await depositSimulatedFunds(owner, ws.organization.id, { rail: "qatom", amount: "100000" });
   return { owner, org: ws.organization.id, projectId: project.id };
 }
@@ -215,7 +216,14 @@ beforeAll(async () => {
 });
 afterAll(async () => close());
 // These sellers are not flagged as samples, so tests connect them to the demo seller explicitly.
-beforeEach(() => setSellerTransportResolver((context) => new DemoSellerTransport(context)));
+// The demo seller only quotes for work a live testing worker can run, so one is on duty.
+beforeEach(async () => {
+  setSellerTransportResolver((context) => new DemoSellerTransport(context));
+  await registerWorker(
+    db,
+    SERVICES.map((service) => `${fixtureProject.fixtureKey}:${service.capability}`),
+  );
+});
 afterEach(() => setSellerTransportResolver(undefined));
 
 describe("no agent activity before the engagement is active", () => {
@@ -316,20 +324,29 @@ describe("a run of the scripted agent", () => {
     expect(new Set(withSeller.map((m) => m.sellerProfileId))).toEqual(new Set([alpha.id]));
     expect(messages.filter((m) => m.kind === "quote_request")).toHaveLength(6);
     expect(messages.filter((m) => m.kind === "quote")).toHaveLength(6);
-    expect(messages.filter((m) => m.kind === "delivery")).toHaveLength(6);
+    expect(messages.filter((m) => m.kind === "delivery_request")).toHaveLength(6);
+    expect(messages.filter((m) => m.kind === "accepted")).toHaveLength(6);
+    expect(messages.filter((m) => m.kind === "delivery")).toHaveLength(0);
     expect(messages.filter((m) => m.kind === "payment_confirmed")).toHaveLength(6);
   });
 
-  it("stores the demo seller's delivery as a simulation with no invented results", async () => {
+  it("queues one testing job per paid purchase and states no result of its own", async () => {
     const purchases = await paidPurchases(id);
+    const jobs = await db.select().from(schema.testingJobs).where(eq(schema.testingJobs.engagementId, id));
+    expect(jobs).toHaveLength(6);
+    expect(new Set(jobs.map((job) => job.purchaseId))).toEqual(new Set(purchases.map((p) => p.id)));
+    for (const job of jobs) {
+      expect(job).toMatchObject({ status: "queued", fixtureKey: "sample-node-api", attempts: 0 });
+    }
+    // Paying is not delivery: nothing is delivered until a worker reports what ran.
     for (const purchase of purchases) {
-      expect(purchase.status).toBe("delivered");
-      expect(purchase.delivery).toMatchObject({ simulated: true, status: "acknowledged" });
-      const text = JSON.stringify(purchase.delivery).toLowerCase();
-      for (const fabricated of ["passed", "failed", "testsrun", "findings\":", "severity", "duration"]) {
-        expect(text, fabricated).not.toContain(fabricated);
-      }
-      expect(text).toContain("no test was executed");
+      expect(purchase.status).toBe("paid");
+      expect(purchase.delivery).toBeNull();
+    }
+    expect(await db.select().from(schema.testingResults)).toEqual([]);
+    const said = JSON.stringify((await messagesOf(id)).filter((m) => m.direction === "seller_to_agent"));
+    for (const fabricated of ["passed", "failed", "testsTotal", "findings", "severity", "duration"]) {
+      expect(said, fabricated).not.toContain(fabricated);
     }
   });
 
@@ -416,7 +433,7 @@ describe("after the buyer's decision", () => {
       .from(schema.purchases)
       .where(eq(schema.purchases.engagementId, id));
     const last = purchases.sort((a, b) => b.sequence - a.sequence)[0];
-    expect(last).toMatchObject({ offeringName: "API contract check", status: "delivered" });
+    expect(last).toMatchObject({ offeringName: "API contract check", status: "paid" });
     const [row] = await db
       .select()
       .from(schema.approvalRequests)
@@ -617,10 +634,27 @@ describe("a seller that tries to change the deal", () => {
     ];
     sellerThat(() => replies.shift() ?? { kind: "refusal", reason: "no" });
     const result = await run(acme.owner, id);
-    expect(result.run).toMatchObject({ status: "failed", purchasesCompleted: 0 });
+    // Each service is ruled out the first time the seller will not quote for it.
+    expect(result.run).toMatchObject({ status: "completed", purchasesCompleted: 0 });
+    expect(result.run.summary).toContain("Nothing was bought. The seller declined 4 services");
     expect(await paidPurchases(id)).toEqual([]);
     const fromSeller = (await messagesOf(id)).filter((m) => m.direction === "seller_to_agent");
+    expect(fromSeller).toHaveLength(4);
     expect(fromSeller.every((m) => m.kind === "refusal")).toBe(true);
+  });
+
+  it("is not asked again and again for something it has declined", async () => {
+    const id = await engage(acme, alpha);
+    sellerThat(() => ({ kind: "refusal", reason: "no" }));
+    const insistent: AgentBrain = {
+      name: "insistent",
+      async next() {
+        return { tool: "purchase_service", input: { offeringId: alpha.offering[4], reason: "again" } };
+      },
+    };
+    const result = await run(acme.owner, id, insistent);
+    expect(result.run).toMatchObject({ status: "failed", purchasesCompleted: 0 });
+    expect((await messagesOf(id)).filter((m) => m.kind === "quote_request")).toHaveLength(4);
   });
 
   it("gets nothing more once the engagement ends mid-run", async () => {
@@ -653,7 +687,7 @@ describe("what the buyer can see", () => {
     expect(activity.budget).toMatchObject({ spentUnits: 4000n, remainingUnits: 6000n });
     expect(activity.purchases).toHaveLength(2);
     expect(activity.purchases[0].paymentReference).toContain("demo-payment:qatom:");
-    expect(activity.purchases[0].deliverySummary).toContain("No test was executed");
+    expect(activity.purchases[0].deliverySummary).toBeNull();
     expect(activity.lastRun?.purchasesCompleted).toBe(2);
     expect(activity.sellerConnection).toMatchObject({ simulated: true });
     expect(activity.can).toEqual({ operate: true, approve: true });

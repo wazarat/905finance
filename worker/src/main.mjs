@@ -1,8 +1,8 @@
 import { hostname } from "node:os";
 import { randomBytes } from "node:crypto";
-import { toolVersion } from "./exec.mjs";
 import { executeJob } from "./job.mjs";
 import { supportedPairs } from "./plans.mjs";
+import { detectTools } from "./tools.mjs";
 
 /**
  * The testing worker.
@@ -39,18 +39,6 @@ function configuration() {
     workerId: process.env.WORKER_ID ?? `${hostname()}-${randomBytes(3).toString("hex")}`,
     pollMs: Math.max(Number(process.env.POLL_MS ?? 3000) || 3000, 500),
   };
-}
-
-async function detectTools() {
-  const [vitest, forge, slither] = await Promise.all([
-    import("vitest/package.json", { with: { type: "json" } }).then(
-      (module) => `vitest ${module.default.version}`,
-      () => null,
-    ),
-    toolVersion("forge"),
-    toolVersion("slither"),
-  ]);
-  return { vitest, forge, slither };
 }
 
 async function post(config, path, body) {

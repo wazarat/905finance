@@ -23,6 +23,15 @@ export function sessionSecret(): Uint8Array {
   return secret;
 }
 
+/**
+ * The shared secret testing workers present. Null when it is missing or too
+ * short, in which case the worker endpoints refuse every request.
+ */
+export function workerToken(): string | null {
+  const token = process.env.WORKER_TOKEN;
+  return token && token.length >= MIN_SECRET_LENGTH ? token : null;
+}
+
 export type PrivyServerConfig = { appId: string; appSecret: string };
 
 export function privyServerConfig(): PrivyServerConfig | null {

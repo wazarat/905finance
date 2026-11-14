@@ -30,6 +30,7 @@ const {
   sellerProfiles,
   purchases,
   approvalRequests,
+  projects,
 } = schema;
 
 /**
@@ -44,6 +45,7 @@ const {
 
 const DEFAULT_MAX_PURCHASES = 6;
 const MAX_REFUSED_STEPS = 3;
+const MAX_DECLINED_SERVICES = 25;
 const STALE_RUN_MS = 2 * 60 * 1000;
 
 const uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
@@ -76,6 +78,11 @@ const sellerReply = z.discriminatedUnion("kind", [
     amountUnits: z.string().regex(/^\d{1,60}$/),
     recipient: z.string().max(500),
     note: z.string().max(2000).optional(),
+  }),
+  z.object({
+    kind: z.literal("accepted"),
+    purchaseId: z.string().max(100),
+    jobId: z.string().max(100),
   }),
   z.object({
     kind: z.literal("delivery"),
@@ -158,6 +165,7 @@ async function buildContext(
   setup: RunSetup,
   purchasesThisRun: number,
   lastSellerNote: string | null,
+  declined: ReadonlyMap<string, string>,
 ): Promise<{ context: AgentContext; offerings: ServiceOffering[]; directiveApprovalId: string | null } | null> {
   const db = getDb();
   const budget = await getBudgetStatus(db, engagementId);
@@ -172,7 +180,10 @@ async function buildContext(
         and(eq(mandatePermittedOfferings.mandateId, budget.mandateId), eq(serviceOfferings.isActive, true)),
       )
       .orderBy(asc(serviceOfferings.name))
-  ).map((row) => row.offering);
+  )
+    .map((row) => row.offering)
+    // A service the seller has declined in this run is not offered to the brain again.
+    .filter((offering) => !declined.has(offering.id));
 
   const bought = await db
     .select({ offeringId: purchases.serviceOfferingId })
@@ -273,8 +284,9 @@ async function startRun(
       .select()
       .from(serviceOfferings)
       .where(eq(serviceOfferings.sellerProfileId, seller.id));
+    const [project] = await tx.select().from(projects).where(eq(projects.id, engagement.projectId));
     const asset = { code: mandate.asset, decimals: mandate.assetDecimals };
-    const transport = resolveSellerTransport({ seller, offerings, rail: engagement.rail, asset });
+    const transport = resolveSellerTransport({ seller, offerings, project, rail: engagement.rail, asset });
     if (!transport) {
       throw conflict(
         `${seller.displayName}'s agent is not connected yet. In this version the purchasing agent can only run against the sample sellers.`,
@@ -340,18 +352,20 @@ export async function runAgent(
   let completed = 0;
   let refused = 0;
   let lastSellerNote: string | null = null;
+  /** Services the seller declined to quote for in this run, with its stated reason. */
+  const declined = new Map<string, string>();
   let status: AgentRun["status"] = "completed";
   let summary = "";
 
   try {
-    for (let step = 0; step < maxPurchases * 2 + MAX_REFUSED_STEPS; step += 1) {
+    for (let step = 0; step < maxPurchases * 2 + MAX_REFUSED_STEPS + MAX_DECLINED_SERVICES; step += 1) {
       const [engagement] = await getDb().select().from(engagements).where(eq(engagements.id, engagementId));
       if (engagement.state !== "ACTIVE") {
         status = engagement.state === "PAUSED_FOR_APPROVAL" ? "paused" : "completed";
         summary = `Stopped: the engagement is ${ENGAGEMENT_STATE_LABELS[engagement.state].toLowerCase()}.`;
         break;
       }
-      const built = await buildContext(engagementId, setup, completed, lastSellerNote);
+      const built = await buildContext(engagementId, setup, completed, lastSellerNote, declined);
       if (!built) {
         summary = "Stopped: the engagement has no mandate.";
         break;
@@ -397,7 +411,13 @@ export async function runAgent(
         quantity,
       });
       if (reply.kind !== "quote") {
-        refused += 1;
+        // Asking again for something already declined is a wasted step, and
+        // only so many are tolerated. A first refusal just rules the service out.
+        if (declined.has(call.input.offeringId) || declined.size >= MAX_DECLINED_SERVICES) refused += 1;
+        declined.set(
+          call.input.offeringId,
+          reply.kind === "refusal" ? reply.reason.slice(0, 300) : "It did not give a price.",
+        );
         if (refused >= MAX_REFUSED_STEPS) {
           status = "failed";
           summary = "Stopped: the seller would not quote for what the agent asked.";
@@ -436,6 +456,8 @@ export async function runAgent(
           offeringId: outcome.purchase.serviceOfferingId,
           paymentReference: outcome.purchase.idempotencyKey,
         });
+        // "accepted" means the work is queued: the purchase stays paid and
+        // undelivered until the testing worker reports what actually happened.
         if (delivery.kind === "delivery") {
           await recordDelivery(outcome.purchase.id, delivery.result);
         }
@@ -471,6 +493,11 @@ export async function runAgent(
   if (!summary) summary = completed > 0 ? `Completed ${completed} purchases.` : "The agent did nothing.";
   else if (completed > 0 && !summary.startsWith("Completed")) {
     summary = `Completed ${completed} ${completed === 1 ? "purchase" : "purchases"}. ${summary}`;
+  }
+  if (declined.size > 0 && status !== "failed") {
+    const reasons = [...new Set(declined.values())];
+    const note = `The seller declined ${declined.size} ${declined.size === 1 ? "service" : "services"}: ${reasons[0]}`;
+    summary = completed === 0 && status === "completed" ? `Nothing was bought. ${note}` : `${summary} ${note}`;
   }
 
   const [finished] = await getDb()
