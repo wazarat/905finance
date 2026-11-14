@@ -115,7 +115,7 @@ Everything below is built and tested; none of it has been run against the real s
 
 | What | Why not | What it needs |
 |---|---|---|
-| Buying a test on the deployed site | No testing worker is hosted, so sellers decline to quote. No payment is taken. | The worker image running somewhere that can reach the site, and `WORKER_TOKEN` set on both |
+| Buying a test on the deployed site | Works only while a testing worker is running for it; otherwise sellers decline to quote and no payment is taken. | `WORKER_TOKEN` set on the site, and `pnpm worker:live up` (see [Serving a deployed site](#serving-a-deployed-site)) or the worker image hosted elsewhere |
 | Agent messages over Qatom | Tested against a stand-in built from Qatom's published behaviour | A free catalog item per seller in the Qatom dashboard, `QATOM_FULFILMENT_TOKEN` and `QATOM_SELLER_ITEMS`, and the owner signing in at Qatom from Settings |
 | Real wallets, payments and fund returns on GOAT Testnet3 | Tested against stand-ins for Privy, GOAT Flow and the chain | `PRIVY_APP_SECRET`, an approved GOAT Flow test merchant with a fee balance whose receiving address is the seller's registry wallet, test tokens, and a little test BTC for network fees |
 | A seller other than the two samples answering an agent | Only the sample sellers have a seller-side agent | A third-party seller endpoint that speaks the signed message format |
@@ -234,9 +234,28 @@ In a container, which is how it is meant to run: a read-only filesystem, no Linu
 docker compose --env-file .env.local --profile worker up --build worker
 ```
 
-Set `WORKER_APP_URL` if the application is not at `http://host.docker.internal:3000`. To serve a deployed site, run the same image anywhere that can reach it, with `APP_URL` set to the site's address and `WORKER_TOKEN` matching the one configured there.
+Set `WORKER_APP_URL` if the application is not at `http://host.docker.internal:3000`.
 
 Add `--drain` (`node src/main.mjs --drain`) to run the jobs that are waiting and then exit.
+
+### Serving a deployed site
+
+The worker only makes outbound requests, so it can run anywhere that can reach the site, including a laptop. To run it on this machine for the deployed site:
+
+```bash
+pnpm worker:live token     # creates .env.worker.live (ignored by git) and copies the token; prints nothing secret
+```
+
+Paste the token into the site's environment variables as `WORKER_TOKEN` (Production, Sensitive) and redeploy. Then:
+
+```bash
+pnpm worker:live up        # start the container; it restarts with Docker
+pnpm worker:live status    # is it running, and does the site accept its token
+pnpm worker:live logs
+pnpm worker:live down
+```
+
+Use a token of its own for a deployed site, not the local development one. While the worker is running, sellers quote and tests can be bought on the site; while it is stopped they decline, and nothing is charged. To host it elsewhere, run the same image with `APP_URL` and `WORKER_TOKEN` set and the same restrictions the compose file applies (read-only filesystem, no capabilities, an unprivileged user).
 
 ## Qatom
 
@@ -351,6 +370,7 @@ If a setting is missing, the server logs which one at startup. Public pages stil
 | `pnpm seller:activate <slug>` | Activate a listing awaiting review |
 | `pnpm seller:identity <slug> <agent-id>` | Link a sample seller to its ERC-8004 agent, reading GOAT Testnet3 |
 | `pnpm qatom:item <slug> "<name>" <url>` | Print what to enter in the Qatom dashboard for a seller's catalog item |
+| `pnpm worker:live token\|up\|status\|logs\|down` | Run the testing worker on this machine for the deployed site |
 
 ## How it is put together
 
