@@ -10,7 +10,7 @@ import {
   requirePermissionOnRecord,
   type Actor,
 } from "./authz";
-import { notFound } from "./errors";
+import { conflict, notFound } from "./errors";
 import { parseInput, projectInput } from "./validation";
 
 const { projects } = schema;
@@ -88,6 +88,14 @@ export async function deleteProject(actor: Actor | null, projectId: string): Pro
   await getDb().transaction(async (tx) => {
     const [project] = await tx.select().from(projects).where(eq(projects.id, projectId));
     await requirePermissionOnRecord(actor, project, "project.delete", "Project", tx);
+    const [engagement] = await tx
+      .select({ id: schema.engagements.id })
+      .from(schema.engagements)
+      .where(eq(schema.engagements.projectId, projectId))
+      .limit(1);
+    if (engagement) {
+      throw conflict("This project has engagements, so it is kept as part of their record.");
+    }
     await tx.delete(projects).where(eq(projects.id, projectId));
     await recordAudit(
       {

@@ -22,6 +22,14 @@ export const PERMISSIONS = {
   "seller_listing.view": ["owner", "admin", "member"],
   "seller_listing.manage": ["owner", "admin"],
   "seller_listing.submit": ["owner", "admin"],
+  "engagement.view": ["owner", "admin", "member"],
+  /** Create an engagement and prepare its mandate. Nothing is authorized by drafting. */
+  "engagement.draft": ["owner", "admin"],
+  "engagement.authorize": ["owner"],
+  "engagement.fund": ["owner"],
+  "engagement.terminate": ["owner"],
+  "wallet.view": ["owner", "admin", "member"],
+  "wallet.manage": ["owner"],
 } as const satisfies Record<string, readonly OrgRole[]>;
 
 export type Permission = keyof typeof PERMISSIONS;

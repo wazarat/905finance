@@ -133,9 +133,27 @@ export const BILLING_UNIT_LABELS = {
   per_hour: "per hour",
 } as const;
 
+/**
+ * Payment rails. Each rail has its own accounts and its own asset; value on
+ * one rail is never counted as, or moved to, another.
+ *
+ * `simulatedAsset` is the stand-in unit used while a rail is not really
+ * connected. Real asset codes, decimals and token contracts are confirmed
+ * against each provider when its integration is built.
+ */
 export const PAYMENT_RAILS = [
-  { key: "qatom", label: "Qatom", asset: "USD-TDN" },
-  { key: "goat", label: "GOAT Network", asset: "GOAT Flow asset" },
+  {
+    key: "qatom",
+    label: "Qatom",
+    asset: "USD-TDN",
+    simulatedAsset: { code: "USD-TDN", decimals: 2 },
+  },
+  {
+    key: "goat",
+    label: "GOAT Network",
+    asset: "GOAT Flow asset",
+    simulatedAsset: { code: "SIM-USD", decimals: 2 },
+  },
 ] as const;
 
 export type PaymentRailKey = (typeof PAYMENT_RAILS)[number]["key"];
@@ -143,6 +161,14 @@ export const PAYMENT_RAIL_KEYS = PAYMENT_RAILS.map((r) => r.key) as [
   PaymentRailKey,
   ...PaymentRailKey[],
 ];
+
+export function getRail(key: string) {
+  return PAYMENT_RAILS.find((r) => r.key === key);
+}
+
+export function isPaymentRail(key: unknown): key is PaymentRailKey {
+  return typeof key === "string" && (PAYMENT_RAIL_KEYS as readonly string[]).includes(key);
+}
 
 export function railLabel(key: string): string {
   return PAYMENT_RAILS.find((r) => r.key === key)?.label ?? key;

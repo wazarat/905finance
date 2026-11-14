@@ -9,7 +9,7 @@ import { conflict, invalid, notFound } from "./errors";
 import { loadPublicSellerDetail, type PublicSellerDetail } from "./marketplace";
 import { endpointInput, offeringInput, parseInput, sellerListingInput } from "./validation";
 
-const { sellerProfiles, serviceOfferings, serviceEndpoints } = schema;
+const { sellerProfiles, serviceOfferings, serviceEndpoints, mandatePermittedOfferings } = schema;
 
 /** The owning organization's full view of its listing, including private fields. */
 export type SellerListing = {
@@ -46,7 +46,7 @@ export async function getSellerListing(
   const offerings = await db
     .select()
     .from(serviceOfferings)
-    .where(eq(serviceOfferings.sellerProfileId, profile.id))
+    .where(and(eq(serviceOfferings.sellerProfileId, profile.id), eq(serviceOfferings.isActive, true)))
     .orderBy(asc(serviceOfferings.createdAt));
   const [endpoint] = await db
     .select()
@@ -172,7 +172,11 @@ export async function createOffering(
   });
 }
 
-/** Remove an offering. It must belong to the caller's own organization's listing. */
+/**
+ * Remove an offering. It must belong to the caller's own organization's
+ * listing. An offering that a buyer's mandate refers to is retired instead of
+ * deleted, so existing mandates keep an accurate record of what was permitted.
+ */
 export async function deleteOffering(
   actor: Actor | null,
   organizationId: string,
@@ -183,18 +187,32 @@ export async function deleteOffering(
   if (!isUuid(offeringId)) throw notFound("Offering");
   await getDb().transaction(async (tx) => {
     const profile = await requireEditableProfile(tx, organizationId);
-    const deleted = await tx
-      .delete(serviceOfferings)
+    const [offering] = await tx
+      .select({ id: serviceOfferings.id })
+      .from(serviceOfferings)
       .where(
         and(eq(serviceOfferings.id, offeringId), eq(serviceOfferings.sellerProfileId, profile.id)),
-      )
-      .returning({ id: serviceOfferings.id });
-    if (deleted.length === 0) throw notFound("Offering");
+      );
+    if (!offering) throw notFound("Offering");
+
+    const [inUse] = await tx
+      .select({ mandateId: mandatePermittedOfferings.mandateId })
+      .from(mandatePermittedOfferings)
+      .where(eq(mandatePermittedOfferings.serviceOfferingId, offeringId))
+      .limit(1);
+    if (inUse) {
+      await tx
+        .update(serviceOfferings)
+        .set({ isActive: false })
+        .where(eq(serviceOfferings.id, offeringId));
+    } else {
+      await tx.delete(serviceOfferings).where(eq(serviceOfferings.id, offeringId));
+    }
     await recordAudit(
       {
         actorUserId: actor.userId,
         organizationId,
-        action: "service_offering.deleted",
+        action: inUse ? "service_offering.retired" : "service_offering.deleted",
         entityType: "service_offering",
         entityId: offeringId,
       },

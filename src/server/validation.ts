@@ -140,6 +140,50 @@ export const endpointInput = z.object({
 export type EndpointInput = z.infer<typeof endpointInput>;
 
 // ---------------------------------------------------------------------------
+// Engagements
+// ---------------------------------------------------------------------------
+
+const uuid = (message: string) =>
+  z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, message);
+
+export const engagementInput = z.object({
+  sellerSlug: z.string().regex(/^[a-z0-9-]{1,64}$/, "Choose a seller."),
+  projectId: uuid("Choose a project."),
+});
+
+export const MANDATE_MIN_DAYS = 1;
+export const MANDATE_MAX_DAYS = 365;
+
+/**
+ * A draft mandate as entered. Amounts stay as text here and are converted to
+ * exact units in the data layer, where the rail's asset is known.
+ */
+export const mandateInput = z.object({
+  rail: z.enum(PAYMENT_RAIL_KEYS, { error: "Choose a payment rail." }),
+  totalBudget: z.string().trim().min(1, "Enter a total budget.").max(40),
+  perTransactionLimit: z.string().trim().min(1, "Enter a per-purchase limit.").max(40),
+  offeringIds: z.array(uuid("Choose valid services.")).min(1, "Permit at least one service.").max(50),
+  scope: z.string().trim().min(10, "Describe the testing scope in a sentence or more.").max(2000),
+  expiresInDays: z
+    .number({ error: "Enter how many days the engagement may run." })
+    .int("Enter a whole number of days.")
+    .min(MANDATE_MIN_DAYS, `At least ${MANDATE_MIN_DAYS} day.`)
+    .max(MANDATE_MAX_DAYS, `At most ${MANDATE_MAX_DAYS} days.`),
+});
+export type MandateInput = z.infer<typeof mandateInput>;
+
+export const fundingInput = z.object({
+  amount: z.string().trim().min(1, "Enter an amount.").max(40),
+  idempotencyKey: z.string().regex(/^[A-Za-z0-9_-]{16,80}$/, "Reload the page and try again."),
+  confirmed: z.literal(true, { error: "Confirm that you authorize this funding." }),
+});
+
+export const depositInput = z.object({
+  rail: z.enum(PAYMENT_RAIL_KEYS, { error: "Choose a payment rail." }),
+  amount: z.string().trim().min(1, "Enter an amount.").max(40),
+});
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

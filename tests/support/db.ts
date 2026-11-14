@@ -1,4 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { setDb, type Db } from "@/db/client";
@@ -75,3 +76,11 @@ export const validEndpoint = {
   url: "https://agent.acme.example/api",
   protocol: "https_json",
 } as const;
+
+/** Activate a listing the way the platform operator script does. */
+export async function platformActivate(db: Db, slug: string): Promise<void> {
+  await db
+    .update(schema.sellerProfiles)
+    .set({ status: "active", activatedAt: new Date() })
+    .where(eq(schema.sellerProfiles.slug, slug));
+}
