@@ -192,6 +192,10 @@ class FakeSigner implements GoatSigner {
     });
   }
 
+  async sendNote(): Promise<Hash> {
+    throw new Error("not used in these tests");
+  }
+
   async sendFeedback(input: FeedbackTransaction) {
     if (this.mode === "throws") throw new Error("privy unavailable");
     this.feedback.push(input);

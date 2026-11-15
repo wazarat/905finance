@@ -52,3 +52,12 @@ export function agentExplorerLink(agentId: string): string {
 export function shortAddress(value: string): string {
   return value.length > 12 ? `${value.slice(0, 6)}…${value.slice(-4)}` : value;
 }
+
+/**
+ * A reference as people see it. One kept in the platform's own ledger is
+ * shown by its id, without the prefix it is stored under.
+ */
+export function displayReference(value: string): string {
+  const internal = /^(?:demo-payment|sim-[a-z]+):[a-z]+:(.+)$/.exec(value);
+  return internal ? `ledger:${internal[1]}` : value;
+}

@@ -9,6 +9,7 @@ import {
   parseEventLogs,
   type Address,
   type Hash,
+  type Hex,
   type PublicClient,
 } from "viem";
 import { GOAT_TESTNET3 } from "@/lib/goat";
@@ -94,6 +95,42 @@ export async function tokenBalance(token: Address, holder: Address): Promise<big
 export async function gasBalance(holder: Address): Promise<bigint> {
   await assertTestnet3();
   return goatClient().getBalance({ address: holder });
+}
+
+/**
+ * Whether a transaction is the note it is claimed to be: sent by `wallet` to
+ * itself, carrying exactly `data`, successful, and with blocks on top of it.
+ * `pending` means it is not settled yet and should be asked about again.
+ */
+export async function verifyNote(expected: {
+  hash: Hash;
+  wallet: Address;
+  data: Hex;
+}): Promise<{ ok: true; blockNumber: bigint } | { ok: false; pending: boolean; reason: string }> {
+  await assertTestnet3();
+  const chain = goatClient();
+  let transaction;
+  let receipt;
+  try {
+    transaction = await chain.getTransaction({ hash: expected.hash });
+    receipt = await chain.getTransactionReceipt({ hash: expected.hash });
+  } catch {
+    return { ok: false, pending: true, reason: "The transaction is not in a block yet." };
+  }
+  if (
+    !transaction.to ||
+    !isAddressEqual(transaction.from, expected.wallet) ||
+    !isAddressEqual(transaction.to, expected.wallet) ||
+    transaction.input.toLowerCase() !== expected.data.toLowerCase()
+  ) {
+    return { ok: false, pending: false, reason: "That transaction does not carry this fingerprint." };
+  }
+  if (receipt.status !== "success") return { ok: false, pending: false, reason: "The transaction failed." };
+  const head = await chain.getBlockNumber();
+  if (head - receipt.blockNumber + 1n < SETTLED_CONFIRMATIONS) {
+    return { ok: false, pending: true, reason: "The transaction is waiting for more blocks." };
+  }
+  return { ok: true, blockNumber: receipt.blockNumber };
 }
 
 export type TransferCheck =

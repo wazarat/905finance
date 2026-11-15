@@ -29,6 +29,7 @@ export const config = {
     "/reports/:path*",
     "/audit/:path*",
     "/validation/:path*",
+    "/proofs/:path*",
     "/settings/:path*",
     "/onboarding/:path*",
   ],

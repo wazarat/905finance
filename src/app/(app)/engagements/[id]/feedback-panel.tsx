@@ -2,12 +2,14 @@ import { Panel } from "@/components/app/page-header";
 import { ChainLink } from "@/components/goat/chain-link";
 import { CaseStatusBadge, Stars } from "@/components/reputation/stars";
 import type { ValidationCase } from "@/db/schema";
+import { ProofTag } from "@/components/proofs/proof-tag";
+import type { ProofTagData } from "@/server/proofs";
 import type { EngagementFeedback } from "@/server/reputation";
 import { CheckRatingForm, RateForm, ReportProblemForm } from "./feedback-forms";
 
 const dateFormat = new Intl.DateTimeFormat("en", { dateStyle: "medium" });
 
-function CaseRecord({ record }: { record: ValidationCase }) {
+function CaseRecord({ record, proof }: { record: ValidationCase; proof: ProofTagData | undefined }) {
   return (
     <li className="space-y-3 py-4">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
@@ -31,6 +33,9 @@ function CaseRecord({ record }: { record: ValidationCase }) {
             Score for the seller&apos;s work: <span className="figure">{record.score} / 100</span>
           </p>
           <p className="mt-1 text-sm leading-relaxed whitespace-pre-wrap text-ink-soft">{record.verdictNote}</p>
+          <p className="mt-2">
+            <ProofTag proof={proof} />
+          </p>
         </div>
       ) : (
         <p className="text-xs text-muted-foreground">
@@ -46,10 +51,14 @@ export function FeedbackPanel({
   engagementId,
   sellerName,
   feedback,
+  ratingProof,
+  verdictProofs,
 }: {
   engagementId: string;
   sellerName: string;
   feedback: EngagementFeedback;
+  ratingProof?: ProofTagData;
+  verdictProofs: Map<string, ProofTagData>;
 }) {
   const { rating, cases } = feedback;
   // Nothing to show until something has been bought.
@@ -70,6 +79,9 @@ export function FeedbackPanel({
             {rating.comment ? (
               <p className="text-sm leading-relaxed whitespace-pre-wrap text-ink-soft">{rating.comment}</p>
             ) : null}
+            <p>
+              <ProofTag proof={ratingProof} />
+            </p>
             {rating.chainStatus === "confirmed" && rating.chainRef ? (
               <p className="text-xs text-muted-foreground">
                 Written to GOAT&apos;s ERC-8004 Reputation Registry: <ChainLink value={rating.chainRef} short />
@@ -108,7 +120,7 @@ export function FeedbackPanel({
           <div className="border-t border-border pt-2">
             <ul className="divide-y divide-border">
               {cases.map((record) => (
-                <CaseRecord key={record.id} record={record} />
+                <CaseRecord key={record.id} record={record} proof={verdictProofs.get(record.id)} />
               ))}
             </ul>
           </div>

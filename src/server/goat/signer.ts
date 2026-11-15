@@ -1,10 +1,13 @@
 import "server-only";
 import { PrivyClient } from "@privy-io/node";
 import { createViemAccount } from "@privy-io/node/viem";
-import { createWalletClient, erc20Abi, getAddress, http, type Address, type Hash } from "viem";
+import { createWalletClient, erc20Abi, getAddress, http, type Address, type Hash, type Hex } from "viem";
 import { goatTestnet3 } from "./chain";
 import { REPUTATION_REGISTRY, feedbackAbi } from "./erc8004";
-import type { GoatLiveConfig } from "./live";
+import type { PrivyServerConfig } from "../env";
+
+/** What the signer needs: the custody provider's credentials, and the policy for engagement wallets if any. */
+export type SignerConfig = { privy: PrivyServerConfig; walletPolicyId: string | null };
 
 /**
  * The only place a key is ever used.
@@ -18,8 +21,13 @@ import type { GoatLiveConfig } from "./live";
  * recipient; a rating only after a person has given it.
  */
 export interface GoatSigner {
-  /** Create a new wallet for one engagement. The same external id never yields a second wallet. */
-  createWallet(input: { externalId: string }): Promise<{ id: string; address: Address }>;
+  /**
+   * Create a new wallet. The same external id never yields a second wallet.
+   * `unrestricted` leaves off the policy that confines an engagement wallet
+   * to token transfers; it is used only for the platform's own proof wallet,
+   * which holds no tokens.
+   */
+  createWallet(input: { externalId: string; unrestricted?: boolean }): Promise<{ id: string; address: Address }>;
   /** Sign and broadcast one ERC-20 transfer from an engagement wallet. Returns the transaction hash. */
   sendTokenTransfer(input: {
     walletId: string;
@@ -33,6 +41,11 @@ export interface GoatSigner {
    * the Reputation Registry. Moves no asset. Returns the transaction hash.
    */
   sendFeedback(input: FeedbackTransaction): Promise<Hash>;
+  /**
+   * Sign and broadcast a transaction from a wallet to itself, carrying a short
+   * note and no value. Used to write a fingerprint to the chain.
+   */
+  sendNote(input: { walletId: string; from: Address; data: Hex }): Promise<Hash>;
 }
 
 export type FeedbackTransaction = {
@@ -51,16 +64,16 @@ export type FeedbackTransaction = {
 export class PrivyGoatSigner implements GoatSigner {
   private readonly client: PrivyClient;
 
-  constructor(private readonly config: GoatLiveConfig) {
+  constructor(private readonly config: SignerConfig) {
     this.client = new PrivyClient({ appId: config.privy.appId, appSecret: config.privy.appSecret });
   }
 
-  async createWallet({ externalId }: { externalId: string }) {
+  async createWallet({ externalId, unrestricted }: { externalId: string; unrestricted?: boolean }) {
     const wallet = await this.client.wallets().create({
       chain_type: "ethereum",
       external_id: externalId,
       display_name: `905 Finance ${externalId}`,
-      ...(this.config.walletPolicyId ? { policy_ids: [this.config.walletPolicyId] } : {}),
+      ...(this.config.walletPolicyId && !unrestricted ? { policy_ids: [this.config.walletPolicyId] } : {}),
       // Asking again for the same engagement returns the same wallet rather than a second one.
       idempotency_key: externalId,
     });
@@ -88,6 +101,17 @@ export class PrivyGoatSigner implements GoatSigner {
       functionName: "transfer",
       args: [input.to, input.amountUnits],
     });
+  }
+
+  async sendNote(input: { walletId: string; from: Address; data: Hex }): Promise<Hash> {
+    const account = createViemAccount(this.client, { walletId: input.walletId, address: input.from });
+    const wallet = createWalletClient({
+      account,
+      chain: goatTestnet3,
+      transport: http(goatTestnet3.rpcUrls.default.http[0], { timeout: 20_000 }),
+    });
+    // To itself, with no value: nothing can leave the wallet this way but the network fee.
+    return wallet.sendTransaction({ to: input.from, value: 0n, data: input.data });
   }
 
   async sendFeedback(input: FeedbackTransaction): Promise<Hash> {
@@ -119,7 +143,7 @@ export class PrivyGoatSigner implements GoatSigner {
 let signer: GoatSigner | undefined;
 let override: GoatSigner | undefined;
 
-export function goatSigner(config: GoatLiveConfig): GoatSigner {
+export function goatSigner(config: SignerConfig): GoatSigner {
   if (override) return override;
   signer ??= new PrivyGoatSigner(config);
   return signer;

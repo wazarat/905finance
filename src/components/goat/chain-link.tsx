@@ -1,4 +1,4 @@
-import { explorerLink, shortAddress } from "@/lib/goat";
+import { displayReference, explorerLink, shortAddress } from "@/lib/goat";
 import { cn } from "@/lib/utils";
 
 /**
@@ -16,9 +16,7 @@ export function ChainLink({
   className?: string;
 }) {
   const href = explorerLink(value);
-  // A reference kept in the platform's own ledger: shown by its id, without the storage prefix.
-  const internal = /^(?:demo-payment|sim-[a-z]+):[a-z]+:(.+)$/.exec(value);
-  const text = short && href ? shortAddress(value) : internal ? `ledger:${internal[1]}` : value;
+  const text = short && href ? shortAddress(value) : displayReference(value);
   if (!href) return <span className={cn("figure break-all", className)}>{text}</span>;
   return (
     <a

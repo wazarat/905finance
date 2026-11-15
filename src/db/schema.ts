@@ -1410,6 +1410,79 @@ export const validationCases = pgTable(
   ],
 );
 
+// ---------------------------------------------------------------------------
+// Proof on GOAT
+// ---------------------------------------------------------------------------
+
+/** A wallet the platform itself holds through its custody provider, by what it is for. */
+export const platformWallets = pgTable("platform_wallets", {
+  purpose: text("purpose").primaryKey(),
+  custodyRef: text("custody_ref").notNull(),
+  address: text("address").notNull(),
+  createdAt: createdAt(),
+});
+
+/**
+ * One transaction on GOAT Testnet3 carrying the combined fingerprint of a
+ * group of records. Writing a fingerprint moves nothing and can safely be
+ * repeated, so a batch that fails simply releases its records to the next.
+ */
+export const proofBatches = pgTable(
+  "proof_batches",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** sending, sent, confirmed or failed. */
+    status: text("status").notNull().default("sending"),
+    /** keccak256 of the member records' fingerprints, in order. Set once the members are fixed. */
+    root: text("root"),
+    recordCount: integer("record_count").notNull().default(0),
+    walletAddress: text("wallet_address").notNull(),
+    txHash: text("tx_hash"),
+    blockNumber: bigint("block_number", { mode: "bigint" }),
+    failureReason: text("failure_reason"),
+    createdAt: createdAt(),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+  },
+  (t) => [
+    // One batch is put together at a time, so two are never sent from the same wallet at once.
+    uniqueIndex("proof_batches_one_sending_uq")
+      .on(t.status)
+      .where(sql`${t.status} = 'sending'`),
+    check("proof_batches_status", sql`${t.status} in ('sending', 'sent', 'confirmed', 'failed')`),
+  ],
+);
+
+/**
+ * The fingerprint of one record: a payment, a funding, a return, a rating or
+ * a verdict. `document` is the exact text that was hashed, so anyone holding
+ * it can compute the fingerprint again.
+ */
+export const proofRecords = pgTable(
+  "proof_records",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sequence: bigint("sequence", { mode: "number" }).notNull().generatedAlwaysAsIdentity(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    engagementId: uuid("engagement_id"),
+    /** payment, funding, return, rating or verdict. */
+    kind: text("kind").notNull(),
+    entityId: uuid("entity_id").notNull(),
+    document: text("document").notNull(),
+    recordHash: text("record_hash").notNull(),
+    batchId: uuid("batch_id").references(() => proofBatches.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique("proof_records_entity_uq").on(t.kind, t.entityId),
+    index("proof_records_org_idx").on(t.organizationId, t.sequence),
+    index("proof_records_batch_idx").on(t.batchId, t.sequence),
+    check("proof_records_kind", sql`${t.kind} in ('payment', 'funding', 'return', 'rating', 'verdict')`),
+  ],
+);
+
 export type User = typeof users.$inferSelect;
 export type Organization = typeof organizations.$inferSelect;
 export type OrganizationMembership = typeof organizationMemberships.$inferSelect;
@@ -1439,6 +1512,8 @@ export type SellerIdentity = typeof sellerIdentities.$inferSelect;
 export type BuyerIdentity = typeof buyerIdentities.$inferSelect;
 export type EngagementRating = typeof engagementRatings.$inferSelect;
 export type ValidationCase = typeof validationCases.$inferSelect;
+export type ProofRecord = typeof proofRecords.$inferSelect;
+export type ProofBatch = typeof proofBatches.$inferSelect;
 export type FundReturn = typeof fundReturns.$inferSelect;
 export type GoatFlowOrder = typeof goatFlowOrders.$inferSelect;
 export type Settlement = "simulated" | "goat_testnet3";

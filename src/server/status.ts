@@ -4,6 +4,7 @@ import { requirePermission, type Actor } from "./authz";
 import { isDevAuthEnabled, privyServerConfig, sessionSecretOrNull, workerToken } from "./env";
 import { goatLiveConfig, goatLiveGaps } from "./goat/live";
 import { qatomAccountCredentials, qatomFulfilmentToken, qatomSellerItems } from "./qatom/config";
+import { getProofStatus } from "./proofs";
 import { getQatomStatus } from "./qatom/connection";
 import { getWorkerStatus } from "./testing/jobs";
 
@@ -37,6 +38,7 @@ export async function getIntegrationStatus(actor: Actor | null, organizationId: 
   const qatomItems = qatomSellerItems().size;
   const qatomSecret = qatomFulfilmentToken() !== null;
   const goat = goatLiveConfig();
+  const proofs = await getProofStatus();
 
   return [
     {
@@ -93,6 +95,25 @@ export async function getIntegrationStatus(actor: Actor | null, organizationId: 
         ? `Real wallets and payments on ${GOAT_TESTNET3.name}, in ${goat.token.symbol}, for sellers with a confirmed identity. Test assets only.`
         : "No wallet or payment touches a chain.",
       missing: forOwner(goat ? [] : goatLiveGaps()),
+    },
+    {
+      name: "GOAT proofs",
+      role: "A fingerprint of every record",
+      state: !proofs.enabled ? "off" : proofs.funded === false || !proofs.walletAddress ? "partial" : "live",
+      summary: !proofs.enabled
+        ? `Records are fingerprinted, and the fingerprints are not written to ${GOAT_TESTNET3.name}.`
+        : !proofs.walletAddress
+          ? "Switched on. The proof wallet is created the first time a record is written."
+          : proofs.funded === false
+            ? `The proof wallet ${proofs.walletAddress} has no ${GOAT_TESTNET3.nativeCurrency.symbol} for network fees, so ${proofs.waiting} ${proofs.waiting === 1 ? "record waits" : "records wait"}.`
+            : `Fingerprints are written to ${GOAT_TESTNET3.name} from ${proofs.walletAddress}. ${proofs.confirmed} written, ${proofs.waiting} waiting.`,
+      missing: forOwner(
+        !proofs.enabled
+          ? proofs.gaps
+          : proofs.funded === false
+            ? [`test ${GOAT_TESTNET3.nativeCurrency.symbol} sent to the proof wallet on ${GOAT_TESTNET3.name}`]
+            : [],
+      ),
     },
   ];
 }

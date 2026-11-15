@@ -21,6 +21,7 @@ The product was built in seven milestones, one at a time. All seven are built. W
 | 7 | End-to-end integration and deployment | **Complete** on simulated settlement; deployed. The live Qatom and GOAT runs await the items above |
 | 8 | Presentation and security findings | **Complete** |
 | 9 | ERC-8004 identity, ratings and validation | **Complete** on the platform; ratings reach GOAT's Reputation Registry once an engagement has a real wallet |
+| 10 | Proof on GOAT for every record | **Built**; writing to the chain awaits `GOAT_PROOFS` and a little test BTC in the proof wallet |
 
 ### What works today (Milestone 1)
 
@@ -130,6 +131,18 @@ ERC-8004 has three parts: identity, reputation and validation. All three now hav
 - **Who validates.** The people named in `PLATFORM_OPERATOR_EMAILS`, matched against their verified sign-in. To everyone else the queue does not exist. A validator cannot decide a case that involves an organization they belong to.
 
 **What is on a chain and what is not.** Identity is read from GOAT Testnet3 today. Ratings are written there only for engagements with a real wallet, which still needs real settlement to be switched on; that path is tested against stand-ins. GOAT's documentation lists no Validation Registry on Testnet3, so cases and verdicts are recorded by 905 Finance. Each case stores a hash of what was put to the validator, fixed when it is opened.
+
+### What works today (Milestone 10)
+
+- **A fingerprint for every record.** Each confirmed payment, executed funding, returned balance, rating and verdict gets a fingerprint: the keccak256 hash of a short document describing it. The document is kept, so the fingerprint can be computed again by anyone holding it.
+- **Written to GOAT Testnet3.** Fingerprints are combined in batches of up to 100. A batch's combined fingerprint (the hash of its members' fingerprints, in order) is written to the chain as the data of a transaction from the platform's proof wallet to itself: the four bytes `905f`, then the 32-byte combined fingerprint.
+- **Checked from the chain, every time it is shown.** A record's proof page re-does every step as it loads: the document hashes to the fingerprint, the fingerprint is in the batch, the batch hashes to the combined fingerprint, and the transaction on GOAT carries exactly that and has settled. If any step fails it says which. The proof downloads as a file with what is needed to check it without this application.
+- **A proof wallet that can do nothing else.** It is held by Privy, created the first time it is needed, and only ever sends zero-value transactions to itself. It holds no tokens. It needs a little test BTC for network fees; until it has some, records wait.
+- **Safe to repeat.** Writing a fingerprint moves nothing, so unlike a payment a failed or doubtful batch is simply written again. One batch is put together at a time, so two are never sent from the wallet at once.
+
+**What a proof proves.** That the record existed in exactly that form when the transaction was made. It does not turn a payment in test funds into a payment on a chain, and the record says which it was. A payment actually made on GOAT has its own transfer as well.
+
+To switch it on, set `GOAT_PROOFS=testnet3` (the Privy credentials must be set too), redeploy, and press **Write waiting proofs to GOAT** on the Transactions page. The proof wallet's address then appears in Settings and on Transactions; send it a little test BTC on GOAT Testnet3.
 
 ### What is not live yet
 
@@ -373,6 +386,7 @@ Import the repository in Vercel, then add these in **Project → Settings → En
 | `SESSION_SECRET` | 32+ random characters (`openssl rand -base64 48`). |
 | `NEXT_PUBLIC_PRIVY_APP_ID`, `PRIVY_APP_SECRET` | From the Privy dashboard, for a Privy app dedicated to this site. |
 | `NEXT_PUBLIC_APP_URL` | The deployment's public URL. |
+| `GOAT_PROOFS` | Optional. Set to `testnet3` to write every record's fingerprint to GOAT Testnet3. See Milestone 10 above. |
 | `PLATFORM_OPERATOR_EMAILS` | Optional. The sign-in email addresses of the people who decide validation cases, separated by commas. Without it, cases wait. |
 | `WORKER_TOKEN` | 32+ random characters, shared with the testing worker. Optional: without it, or with no worker running, sellers decline to quote and no test is bought. |
 
@@ -421,6 +435,7 @@ src/server/agent/      agent runtime, brain interface, seller transport and demo
 src/server/goat/       Testnet3 access, ERC-8004 reads, GOAT Flow client, the signer, guarded document fetch
 src/server/identity.ts linking a listing to its on-chain identity
 src/server/reputation.ts  star ratings, problems put to 905 Finance, the validator's verdicts
+src/server/proofs.ts   fingerprints of records, written to GOAT Testnet3 and checked against it
 src/server/closure.ts  completing an engagement, returning unused funds, the final record
 src/server/audit-log.ts, status.ts   the activity log; what is live, simulated or off
 src/server/qatom/      Qatom account link, signed messages, MCP client, seller endpoint checks
@@ -558,5 +573,7 @@ The GOAT suite runs against stand-ins for the chain, Privy and GOAT Flow. The ER
 - The final suite (`tests/final.test.ts`): the complete demonstration from a verified sign-in to a closed engagement, with a real Vitest run in the middle, a blocked purchase, an approved budget, separately authorized funding, a resumed agent, and a final record that reconciles; a second engagement with another seller that shares nothing with the first; each of the eighteen security invariants as its own named check; completion and fund returns, simulated and on Testnet3 stand-ins; re-running a failed test without a second charge; and the activity log and status panel showing only what the viewer may see.
 
 - Reputation and validation: ratings limited to one to five stars, once per engagement, by the buyer's owner or admin, and only after something was bought; low ratings and reported problems opening one case at a time; the seller's single reply; the validator named only by the deployment's settings and invisible to everyone else; a verdict whose score has to agree with it, given once, never by someone on either side; a public reputation that carries no names or comments; registration documents that count only at this application's own address; a buying agent confirmed only by its own registration; and a rating written to GOAT once, from the engagement's wallet, and never re-sent when its outcome is unknown.
+
+- Proofs: one fingerprint per settled record, with private text left out; nothing sent and no wallet made while switched off; one transaction per batch carrying exactly the combined fingerprint; nothing counted as written until the chain has settled it; a failed, rejected or dropped batch written again; each record in one batch only under simultaneous requests; a proof failing its check when the record, its fingerprint or the transaction is altered; and a proof readable only by the organization whose record it is.
 
 The testing suite also **executes the real tools** against the bundled fixtures, through the same worker code and submission path the application uses, and asserts the figures they report (for example, Vitest: 6 tests, 5 passed, 1 failed). The Vitest cases always run; the Foundry and Slither cases run when those tools are on `PATH` and are skipped otherwise.

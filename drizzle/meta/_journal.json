@@ -99,6 +99,13 @@
       "when": 1794703678901,
       "tag": "0013_shocking_lizard",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1794704834421,
+      "tag": "0014_wooden_karma",
+      "breakpoints": true
     }
   ]
 }

@@ -7,7 +7,10 @@ import { SimulatedBadge } from "@/components/engagements/badges";
 import { ChainLink } from "@/components/goat/chain-link";
 import { railLabel } from "@/lib/capabilities";
 import { formatUnits } from "@/lib/units";
+import { ProofTag } from "@/components/proofs/proof-tag";
 import { requireWorkspace } from "@/server/page-context";
+import { getProofStatus, listProofs } from "@/server/proofs";
+import { RunProofsForm } from "../proofs/run-proofs-form";
 import { getSpendingTotals, listPayments, type PaymentLine } from "@/server/transactions";
 
 export const metadata: Metadata = { title: "Transactions" };
@@ -34,6 +37,13 @@ async function TransactionsContent() {
   }
   const payments = await listPayments(actor, workspace.organization.id);
   const totals = await getSpendingTotals(actor, workspace.organization.id);
+  const proofs = await listProofs(
+    actor,
+    workspace.organization.id,
+    "payment",
+    payments.filter((payment) => payment.status === "succeeded").map((payment) => payment.id),
+  );
+  const proofStatus = await getProofStatus();
 
   return (
     <div className="space-y-8">
@@ -56,6 +66,35 @@ async function TransactionsContent() {
           ))}
         </section>
       ) : null}
+
+      <Panel
+        title="Proof on GOAT"
+        description={
+          proofStatus.enabled
+            ? "Each confirmed payment's fingerprint is written to GOAT Testnet3, where anyone holding the record can check it."
+            : "Each confirmed payment has a fingerprint that can be written to GOAT Testnet3."
+        }
+      >
+        {proofStatus.enabled ? (
+          <div className="space-y-3">
+            <RunProofsForm />
+            {proofStatus.funded === false && proofStatus.walletAddress ? (
+              <p className="text-sm leading-relaxed text-warn">
+                The proof wallet has nothing to pay the network fee with. Send a little test BTC on GOAT Testnet3 to{" "}
+                <ChainLink value={proofStatus.walletAddress} />.
+              </p>
+            ) : null}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              Records are fingerprinted as they settle. Writing the fingerprints to GOAT is not switched on for this
+              deployment yet, so each proof shows as waiting. See Settings for what is missing.
+            </p>
+            <RunProofsForm label="Fingerprint records now" />
+          </div>
+        )}
+      </Panel>
 
       <Panel title="Payments" description="Newest first.">
         {payments.length === 0 ? (
@@ -82,6 +121,7 @@ async function TransactionsContent() {
                       {railLabel(payment.rail)} · {dateTimeFormat.format(payment.createdAt)}
                     </span>
                     {payment.isSimulated ? <SimulatedBadge /> : null}
+                    <ProofTag proof={proofs.get(payment.id)} />
                     <Link
                       href={`/engagements/${payment.engagementId}`}
                       className="text-ink-soft underline underline-offset-4 hover:text-foreground"

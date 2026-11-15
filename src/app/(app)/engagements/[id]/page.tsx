@@ -38,6 +38,8 @@ import {
   type WalletChainState,
 } from "@/server/engagements";
 import { getEngagementStatement } from "@/server/closure";
+import { ProofTag } from "@/components/proofs/proof-tag";
+import { listProofs } from "@/server/proofs";
 import { getEngagementFeedback } from "@/server/reputation";
 import { isAppError } from "@/server/errors";
 import { requireWorkspace } from "@/server/page-context";
@@ -284,6 +286,11 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
   const chain = wallet && !wallet.isSimulated ? await getWalletChainState(actor, id) : null;
   const statement = wallet ? await getEngagementStatement(actor, id) : null;
   const feedback = await getEngagementFeedback(actor, id);
+  const organizationId = engagement.organizationId;
+  const fundingProofs = await listProofs(actor, organizationId, "funding", detail.fundings.map((funding) => funding.id));
+  const returnProofs = await listProofs(actor, organizationId, "return", (statement?.returns ?? []).map((entry) => entry.id));
+  const ratingProofs = feedback.rating ? await listProofs(actor, organizationId, "rating", [feedback.rating.id]) : new Map();
+  const verdictProofs = await listProofs(actor, organizationId, "verdict", feedback.cases.map((entry) => entry.id));
   const state = engagement.state;
   const ended = isTerminal(state);
 
@@ -558,6 +565,9 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
                   {funding.transactionHash ? (
                     <ChainLink value={funding.transactionHash} short className="text-xs text-muted-foreground" />
                   ) : null}
+                  <div>
+                    <ProofTag proof={fundingProofs.get(funding.id)} />
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   {funding.isSimulated ? <SimulatedBadge /> : null}
@@ -583,7 +593,13 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
         </Panel>
       ) : null}
 
-      <FeedbackPanel engagementId={id} sellerName={seller.displayName} feedback={feedback} />
+      <FeedbackPanel
+        engagementId={id}
+        sellerName={seller.displayName}
+        feedback={feedback}
+        ratingProof={feedback.rating ? ratingProofs.get(feedback.rating.id) : undefined}
+        verdictProofs={verdictProofs}
+      />
 
       <Panel title="History" description="Every change of state, in order.">
         <ol className="space-y-4">
@@ -657,6 +673,9 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
                       <ChainLink value={entry.reference} short className="ml-2 text-xs text-muted-foreground" />
                     ) : null}
                     {entry.note ? <span className="mt-0.5 block text-xs text-muted-foreground">{entry.note}</span> : null}
+                    <span className="mt-0.5 block">
+                      <ProofTag proof={returnProofs.get(entry.id)} />
+                    </span>
                   </span>
                   <span
                     className={

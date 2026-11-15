@@ -1,6 +1,7 @@
 "use server";
 
 import { refresh } from "next/cache";
+import { after } from "next/server";
 import { redirect } from "next/navigation";
 import {
   authorizeEngagement,
@@ -23,7 +24,18 @@ import {
 } from "@/server/form-state";
 import { checkFundReturn, completeEngagement, returnUnusedFunds } from "@/server/closure";
 import { requireActionWorkspace } from "@/server/page-context";
+import { runProofs } from "@/server/proofs";
 import { checkRatingOnChain, rateEngagement, reportProblem } from "@/server/reputation";
+
+/**
+ * After the response has gone out, fingerprint whatever just settled and
+ * write waiting fingerprints to GOAT. It never fails the action it follows.
+ */
+function proveAfterwards(): void {
+  after(async () => {
+    await runProofs();
+  });
+}
 
 // Engagement ids arrive from the form, but every data-layer call checks that
 // the signed-in user belongs to the engagement's organization and holds the
@@ -116,6 +128,7 @@ export async function authorizeFundingAction(_prev: FormState, formData: FormDat
     return failureState(error, formValues(formData));
   }
   refresh();
+  proveAfterwards();
   if (failed) {
     return { ok: false, message: `Funding failed and no funds moved: ${failed}` };
   }
@@ -151,6 +164,7 @@ export async function runAgentAction(_prev: FormState, formData: FormData): Prom
     return failureState(error);
   }
   refresh();
+  proveAfterwards();
   return { ok, message: summary };
 }
 
@@ -165,6 +179,7 @@ export async function approveBudgetAction(_prev: FormState, formData: FormData):
     return failureState(error, formValues(formData));
   }
   refresh();
+  proveAfterwards();
   return { ok: true, message: "Budget increased. No funds were moved." };
 }
 
@@ -202,6 +217,7 @@ export async function reconcilePurchaseAction(_prev: FormState, formData: FormDa
     return failureState(error);
   }
   refresh();
+  proveAfterwards();
   return {
     ok: status !== "needs_reconciliation",
     message:
@@ -238,6 +254,7 @@ export async function returnFundsAction(_prev: FormState, formData: FormData): P
     return failureState(error, formValues(formData));
   }
   refresh();
+  proveAfterwards();
   if (outcome.status === "executed") return { ok: true, message: "Unused funds returned." };
   if (outcome.status === "sent") {
     return { ok: true, message: "The transfer was sent and is waiting for the chain to confirm it." };
@@ -274,6 +291,7 @@ export async function rateEngagementAction(_prev: FormState, formData: FormData)
     return failureState(error, formValues(formData));
   }
   refresh();
+  proveAfterwards();
   return {
     ok: true,
     message: reviewed ? "Rating saved, and sent to 905 Finance for review." : "Rating saved.",
