@@ -71,11 +71,13 @@ export async function workerSupport(
   fixtureKey: string,
   capability: string,
   db: DbOrTx = getDb(),
+  /** Judge by every worker that has ever checked in, not only those online now. */
+  everSeen = false,
 ): Promise<WorkerSupport> {
   const live = await db
     .select({ supports: testingWorkers.supports })
     .from(testingWorkers)
-    .where(gt(testingWorkers.lastSeenAt, new Date(Date.now() - WORKER_LIVE_MS)));
+    .where(everSeen ? undefined : gt(testingWorkers.lastSeenAt, new Date(Date.now() - WORKER_LIVE_MS)));
   if (live.length === 0) return "offline";
   return live.some((worker) => worker.supports.includes(pair(fixtureKey, capability))) ? "ready" : "unsupported";
 }
@@ -91,6 +93,8 @@ export async function fulfilmentBlocker(
   db: DbOrTx = getDb(),
   /** Set when the work is a watch over this many days rather than a single look. */
   periodDays: number | null = null,
+  /** Ask whether the work suits the project at all, whichever workers happen to be online at this moment. */
+  everSeen = false,
 ): Promise<string | null> {
   const label = getCapability(capability)?.label ?? capability;
   if (project.sourceType !== "fixture" && !isRepositoryCapability(capability)) {
@@ -111,14 +115,60 @@ export async function fulfilmentBlocker(
       return `This project already has this watch running, until ${running.endsAt.toISOString().slice(0, 10)}. A second one would read the same thing.`;
     }
   }
-  const support = await workerSupport(target.key, capability, db);
-  if (support === "offline") {
-    return "No testing worker is online, so this test cannot be run right now.";
-  }
+  const support = await workerSupport(target.key, capability, db, everSeen);
+  if (support === "offline") return WORKER_OFFLINE;
   if (support === "unsupported") {
+    // A read-only look on a bundled sample: the mismatch is the project, not the worker.
+    if (project.sourceType === "fixture" && Object.hasOwn(SHARED_WITH, capability)) {
+      return `"${label}" cannot be run on this bundled sample project. It reads what a project of your own shares: create a project that shares ${SHARED_WITH[capability]}, and engage the seller for that one.`;
+    }
+    if (project.sourceType === "fixture") {
+      return `"${label}" is not one of the tests that run on this bundled sample project.`;
+    }
     return `No testing worker can run "${label}" against this project.`;
   }
   return null;
+}
+
+const WORKER_OFFLINE = "No testing worker is online, so this test cannot be run right now.";
+
+/** What a project of the buyer's own has to share for each read-only look, in words. */
+const SHARED_WITH: Record<string, string> = {
+  security_scan: "a public GitHub repository or some JavaScript or TypeScript files",
+  solidity_review: "a public GitHub repository or some .sol files",
+  website_check: "a website address",
+  contract_check: "contract addresses",
+};
+
+export type ProjectFit = {
+  /** How many of the services could be run on the project. */
+  runnable: number;
+  total: number;
+  /** Why the first service that cannot be run cannot, in words. Null when all can. */
+  reason: string | null;
+};
+
+/**
+ * How well a project suits what a seller sells: how many of its services
+ * could be run on it, and why not for one that could not. Asked before an
+ * engagement is created, so a buyer does not pair a seller with a project it
+ * has nothing to do on. Whether a worker is online right now says nothing
+ * about the project, so the question is put to every worker that has ever
+ * checked in; where none ever has, the project is given the benefit of the doubt.
+ */
+export async function projectFit(
+  project: TestableProject,
+  services: ReadonlyArray<{ capability: string; periodDays: number | null }>,
+  db: DbOrTx = getDb(),
+): Promise<ProjectFit> {
+  let runnable = 0;
+  let reason: string | null = null;
+  for (const service of services) {
+    const blocker = await fulfilmentBlocker(project, service.capability, db, service.periodDays, true);
+    if (blocker === null || blocker === WORKER_OFFLINE) runnable += 1;
+    else reason ??= blocker;
+  }
+  return { runnable, total: services.length, reason };
 }
 
 export type TestableProject = Pick<

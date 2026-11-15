@@ -23,7 +23,7 @@ import { isCheckableWebsite } from "@/lib/repository";
 import { createProject } from "@/server/projects";
 import { runProofs } from "@/server/proofs";
 import { createOffering, saveSellerEndpoint, updateSellerListing } from "@/server/sellers";
-import { claimTestingJob, setRepositoryProbe, submitTestingResult, workerSupport } from "@/server/testing/jobs";
+import { claimTestingJob, projectFit, setRepositoryProbe, submitTestingResult, workerSupport } from "@/server/testing/jobs";
 import { getTestingReport } from "@/server/testing/reports";
 import { depositSimulatedFunds } from "@/server/wallets";
 import {
@@ -349,7 +349,44 @@ describe("a first look at what a project shares", () => {
     expect(await workerSupport("sample-node-api", "website_check")).toBe("unsupported");
     expect(await workerSupport("sample-solidity-vault", "contract_check")).toBe("unsupported");
     const fixture = await createProject(buyer, org, { ...fixtureProject, applicationUrl: "https://www.example.com" });
-    expect(await declined(fixture.id, "website_check")).toContain("No testing worker can run");
+    // The buyer is told the mismatch is the project, and what kind of project to use instead.
+    expect(await declined(fixture.id, "website_check")).toContain(
+      '"Website first look" cannot be run on this bundled sample project. It reads what a project of your own shares: create a project that shares a website address',
+    );
+    expect(await declined(fixture.id, "contract_check")).toContain("create a project that shares contract addresses");
+    expect(await declined(fixture.id, "solidity_review")).toContain("a public GitHub repository or some .sol files");
+  });
+
+  it("tells a buyer, before an engagement is created, which projects a seller has anything to do on", async () => {
+    const services = [
+      { capability: "website_check", periodDays: null },
+      { capability: "contract_check", periodDays: null },
+      { capability: "website_check", periodDays: 5 },
+    ];
+    const fixture = await createProject(buyer, org, { ...fixtureProject, name: "Bundled for fit" });
+    expect(await projectFit(fixture, services)).toEqual({
+      runnable: 0,
+      total: 3,
+      reason: expect.stringContaining("cannot be run on this bundled sample project"),
+    });
+    const site = await createProject(buyer, org, { ...own, name: "Site for fit", applicationUrl: "https://www.example.com" });
+    expect(await projectFit(site, services)).toEqual({
+      runnable: 2,
+      total: 3,
+      reason: expect.stringContaining("shares no contract addresses"),
+    });
+    const both = await createProject(buyer, org, { ...own, name: "Both for fit", applicationUrl: "https://www.example.com", contractAddresses: REGISTRY });
+    expect(await projectFit(both, services)).toEqual({ runnable: 3, total: 3, reason: null });
+    expect(await projectFit(both, [])).toEqual({ runnable: 0, total: 0, reason: null });
+    // Whether a worker is online at this moment is not the project's business: one that went quiet still counts.
+    await db.update(schema.testingWorkers).set({ lastSeenAt: new Date(Date.now() - 3_600_000) });
+    expect(await workerSupport("website", "website_check")).toBe("offline");
+    expect(await projectFit(both, services)).toEqual({ runnable: 3, total: 3, reason: null });
+    expect((await projectFit(site, services)).runnable).toBe(2);
+    expect((await projectFit(fixture, services)).runnable).toBe(0);
+    // Where no worker has ever checked in, nothing is known, and the project is not marked down.
+    await db.delete(schema.testingWorkers);
+    expect(await projectFit(both, services)).toEqual({ runnable: 3, total: 3, reason: null });
   });
 });
 

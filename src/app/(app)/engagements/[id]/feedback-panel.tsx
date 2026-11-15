@@ -61,8 +61,6 @@ export function FeedbackPanel({
   verdictProofs: Map<string, ProofTagData>;
 }) {
   const { rating, cases } = feedback;
-  // Nothing to show until something has been bought.
-  if (!rating && cases.length === 0 && feedback.rateBlockedBy) return null;
   return (
     <Panel
       title="Rating and review"
@@ -110,6 +108,11 @@ export function FeedbackPanel({
               </p>
             )}
           </div>
+        ) : feedback.rateBlockedBy ? (
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            {feedback.rateBlockedBy} A rating is of work that was paid for, so the stars appear here as soon as
+            the agent has bought something from {sellerName}. You can rate before or after the engagement ends.
+          </p>
         ) : feedback.canAct ? (
           <RateForm engagementId={engagementId} sellerName={sellerName} />
         ) : (

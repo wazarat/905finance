@@ -15,12 +15,21 @@ export function CreateEngagementForm({
 }: {
   sellerSlug: string;
   sellerName: string;
-  projects: Array<{ id: string; name: string; hasWeb3: boolean }>;
+  projects: Array<{
+    id: string;
+    name: string;
+    hasWeb3: boolean;
+    bundled: boolean;
+    fit: { runnable: number; total: number; reason: string | null };
+  }>;
 }) {
   const [state, action] = useActionState(createEngagementAction, initialFormState);
   const errors = state.fieldErrors ?? {};
   const echoed = typeof state.values?.projectId === "string" ? state.values.projectId : null;
-  const preselected = echoed ?? (projects.length === 1 ? projects[0].id : null);
+  // Offer first the projects this seller has something to do on.
+  const ordered = [...projects].sort((a, b) => Number(b.fit.runnable > 0) - Number(a.fit.runnable > 0));
+  const suited = ordered.filter((project) => project.fit.runnable > 0);
+  const preselected = echoed ?? (suited.length === 1 ? suited[0].id : null);
 
   return (
     <form action={action} className="space-y-6">
@@ -28,24 +37,44 @@ export function CreateEngagementForm({
       <fieldset className="space-y-3">
         <legend className="text-sm font-medium text-foreground">Which project is this for?</legend>
         <div className="grid gap-2">
-          {projects.map((project) => (
+          {ordered.map((project) => (
             <label key={project.id} className={choiceCard}>
-              <span className="flex items-center gap-3">
+              <span className="flex min-w-0 items-start gap-3">
                 <input
                   type="radio"
                   name="projectId"
                   value={project.id}
                   defaultChecked={preselected === project.id}
-                  className="size-4 accent-[var(--brand)]"
+                  className="mt-0.5 size-4 shrink-0 accent-[var(--brand)]"
                 />
-                <span className="text-sm font-medium text-foreground">{project.name}</span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-foreground">{project.name}</span>
+                  {project.fit.total === 0 ? null : project.fit.runnable === 0 ? (
+                    <span className="mt-1 block text-xs leading-relaxed text-warn">
+                      Nothing {sellerName} sells can be run on this project. {project.fit.reason}
+                    </span>
+                  ) : (
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      {project.fit.runnable === project.fit.total
+                        ? `All ${project.fit.total} of ${sellerName}'s services can be run on it.`
+                        : `${project.fit.runnable} of ${sellerName}'s ${project.fit.total} services can be run on it.`}
+                    </span>
+                  )}
+                </span>
               </span>
-              <span className="text-xs text-muted-foreground">
-                {project.hasWeb3 ? "Includes Web3" : "Conventional"}
+              <span className="shrink-0 text-right text-xs text-muted-foreground">
+                {project.bundled ? "Bundled sample" : "Your own"}
+                <span className="block">{project.hasWeb3 ? "Includes Web3" : "Conventional"}</span>
               </span>
             </label>
           ))}
         </div>
+        {suited.length === 0 ? (
+          <p className="text-sm leading-relaxed text-warn">
+            None of your projects has anything {sellerName} can work on. Create a project that shares what it
+            reads, then come back to this seller.
+          </p>
+        ) : null}
         <FieldError id="projectId-error" messages={errors.projectId} />
       </fieldset>
 

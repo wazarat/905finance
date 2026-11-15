@@ -11,6 +11,7 @@ import { roleHasPermission } from "@/server/authz";
 import { getPublicSellerBySlug } from "@/server/marketplace";
 import { requireWorkspace } from "@/server/page-context";
 import { listProjects } from "@/server/projects";
+import { projectFit, type ProjectFit } from "@/server/testing/jobs";
 import { EnableRoleForm } from "../../enable-role-form";
 import { CreateEngagementForm } from "./create-engagement-form";
 
@@ -60,6 +61,9 @@ async function NewEngagementContent({ searchParams }: PageProps<"/engagements/ne
 
   const projects = await listProjects(actor, workspace.organization.id);
   const canDraft = roleHasPermission(workspace.role, "engagement.draft");
+  // Which of this seller's services could be run on each project, so a mismatch shows before anything is created.
+  const fits = new Map<string, ProjectFit>();
+  for (const project of projects) fits.set(project.id, await projectFit(project, seller.offerings));
 
   return (
     <div className="space-y-8">
@@ -115,7 +119,13 @@ async function NewEngagementContent({ searchParams }: PageProps<"/engagements/ne
           <CreateEngagementForm
             sellerSlug={seller.slug}
             sellerName={seller.displayName}
-            projects={projects.map((p) => ({ id: p.id, name: p.name, hasWeb3: p.hasWeb3 }))}
+            projects={projects.map((p) => ({
+              id: p.id,
+              name: p.name,
+              hasWeb3: p.hasWeb3,
+              bundled: p.sourceType === "fixture",
+              fit: fits.get(p.id)!,
+            }))}
           />
         ) : (
           <p className="text-sm text-muted-foreground">Owners and admins can create engagements.</p>
