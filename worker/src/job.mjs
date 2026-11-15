@@ -1,11 +1,12 @@
 import { lstat, readFile } from "node:fs/promises";
 import path from "node:path";
-import { planFor } from "./plans.mjs";
+import { REPOSITORY, planFor } from "./plans.mjs";
+import { fetchRepository } from "./repository.mjs";
 import { runEslintSecurity } from "./runners/eslint-security.mjs";
 import { runForgeBuild, runForgeTest } from "./runners/forge.mjs";
 import { runSlither } from "./runners/slither.mjs";
 import { runVitest } from "./runners/vitest.mjs";
-import { prepareRunDirectory, removeRunDirectory } from "./workspace.mjs";
+import { prepareEmptyRunDirectory, prepareRunDirectory, removeRunDirectory } from "./workspace.mjs";
 
 const MAX_LOG = 200_000;
 const CONTEXT_LINES = 3;
@@ -49,10 +50,11 @@ async function excerptFor(runDir, finding) {
  * Execute one job and return its result. The job only says which fixture and
  * which capability; what is run is decided by this worker's own table.
  *
- * @param {{ id: string, fixtureKey: string, capability: string }} job
+ * @param {{ id: string, fixtureKey: string, capability: string, source?: { kind: string, owner: string, repo: string } }} job
  * @param {Record<string, string | null>} tools
+ * @param {{ fetchSource?: typeof fetchRepository }} [options] Test hook: stand in for GitHub.
  */
-export async function executeJob(job, tools) {
+export async function executeJob(job, tools, options = {}) {
   const plan = planFor(job.fixtureKey, job.capability);
   if (!plan) {
     return {
@@ -82,9 +84,28 @@ export async function executeJob(job, tools) {
     };
   }
 
-  const runDir = await prepareRunDirectory(job.fixtureKey, job.id);
+  const shared = job.fixtureKey === REPOSITORY;
+  const runDir = shared ? await prepareEmptyRunDirectory(job.id) : await prepareRunDirectory(job.fixtureKey, job.id);
   try {
-    const input = { runDir, target: plan.target, timeoutMs: plan.timeoutMs, toolVersion };
+    let origin = null;
+    if (shared) {
+      try {
+        origin = await (options.fetchSource ?? fetchRepository)(job.source, runDir);
+      } catch (error) {
+        return {
+          outcome: "error",
+          tool: plan.tool,
+          toolVersion,
+          command: "",
+          exitCode: null,
+          durationMs: 0,
+          log: "",
+          error: `The repository could not be fetched: ${String(error?.message ?? error).slice(0, 300)}`,
+          findings: [],
+        };
+      }
+    }
+    const input = { runDir, target: plan.target, timeoutMs: plan.timeoutMs, toolVersion, shared };
     const result =
       plan.runner === "vitest"
         ? await runVitest(input)
@@ -97,9 +118,13 @@ export async function executeJob(job, tools) {
               : await runSlither(input);
     // Paths inside the private run directory mean nothing to a reader.
     const scrub = (text) => String(text ?? "").replaceAll(runDir, ".");
+    // What was read, and at which commit, is part of the record of the run.
+    const provenance = origin
+      ? `Read github.com/${origin.name}${origin.revision ? ` at commit ${origin.revision}` : ""}: ${origin.files} files. Nothing in it was installed, built or run.\n`
+      : "";
     return {
       ...result,
-      log: scrub(result.log).slice(0, MAX_LOG),
+      log: (provenance + scrub(result.log)).slice(0, MAX_LOG),
       error: result.error ? scrub(result.error) : undefined,
       findings: await Promise.all(
         (result.findings ?? []).slice(0, 200).map(async ({ span, ...finding }) => {

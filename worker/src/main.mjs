@@ -88,7 +88,8 @@ async function main() {
       continue;
     }
 
-    console.log(`Job ${job.id}: ${job.capability} on ${job.fixtureKey}`);
+    const subject = job.source ? `github.com/${job.source.owner}/${job.source.repo}` : job.fixtureKey;
+    console.log(`Job ${job.id}: ${job.capability} on ${subject}`);
     let result;
     try {
       result = await executeJob(job, tools);

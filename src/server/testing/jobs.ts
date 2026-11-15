@@ -1,3 +1,9 @@
+import {
+  REPOSITORY_TARGET,
+  isRepositoryCapability,
+  parseGitHubRepository,
+  type GitHubRepository,
+} from "@/lib/repository";
 import "server-only";
 import { and, asc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -62,20 +68,100 @@ export async function workerSupport(
  * nobody pays for a test that would never execute.
  */
 export async function fulfilmentBlocker(
-  project: Pick<Project, "sourceType" | "fixtureKey">,
+  project: Pick<Project, "sourceType" | "fixtureKey" | "repositoryUrl">,
   capability: string,
   db: DbOrTx = getDb(),
 ): Promise<string | null> {
-  if (project.sourceType !== "fixture" || !project.fixtureKey) {
-    return "Testing is available for the bundled sample projects only. Running tests against your own repository is not available yet.";
-  }
   const label = getCapability(capability)?.label ?? capability;
-  const support = await workerSupport(project.fixtureKey, capability, db);
+  const target = targetOf(project);
+  if (!target) {
+    return "Only a public GitHub repository can be scanned. Change the project's repository address to one, or use a bundled project.";
+  }
+  if (target.source && !isRepositoryCapability(capability)) {
+    return `"${label}" runs the project's code, which is offered for the bundled projects only. Your own repository can be scanned without running it.`;
+  }
+  const support = await workerSupport(target.key, capability, db);
   if (support === "offline") {
     return "No testing worker is online, so this test cannot be run right now.";
   }
   if (support === "unsupported") {
     return `No testing worker can run "${label}" against this project.`;
+  }
+  return null;
+}
+
+type JobTarget = { key: string; source: { kind: "github"; owner: string; repo: string } | null };
+
+/** What a project's tests are run on: a bundled project, or a repository it shares. Null when it is neither. */
+export function targetOf(project: Pick<Project, "sourceType" | "fixtureKey" | "repositoryUrl">): JobTarget | null {
+  if (project.sourceType === "fixture") return project.fixtureKey ? { key: project.fixtureKey, source: null } : null;
+  const repository = parseGitHubRepository(project.repositoryUrl);
+  return repository ? { key: REPOSITORY_TARGET, source: { kind: "github", ...repository } } : null;
+}
+
+export type RepositoryProbe = (repository: GitHubRepository) => Promise<{ exists: boolean | null; languages: string[] | null }>;
+
+/** Ask GitHub whether a repository is public, and what it is written in. */
+const askGitHub: RepositoryProbe = async ({ owner, repo }) => {
+  const headers = { "user-agent": "905finance", accept: "application/vnd.github+json" };
+  let exists: boolean | null = null;
+  try {
+    const page = await fetch(`https://github.com/${owner}/${repo}`, {
+      method: "HEAD",
+      redirect: "manual",
+      headers: { "user-agent": headers["user-agent"] },
+      signal: AbortSignal.timeout(8_000),
+    });
+    exists = page.status === 200 ? true : page.status === 404 || (page.status >= 300 && page.status < 400) ? false : null;
+  } catch {
+    exists = null;
+  }
+  let languages: string[] | null = null;
+  try {
+    const answer = await fetch(`https://api.github.com/repos/${owner}/${repo}/languages`, {
+      headers,
+      redirect: "error",
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (answer.ok) {
+      const body: unknown = await answer.json();
+      if (body && typeof body === "object") languages = Object.keys(body).slice(0, 50);
+    }
+  } catch {
+    languages = null;
+  }
+  return { exists, languages };
+};
+
+let probe: RepositoryProbe = askGitHub;
+
+/** Test hook: stand in for GitHub, or restore it with undefined. */
+export function setRepositoryProbe(next: RepositoryProbe | undefined): void {
+  probe = next ?? askGitHub;
+}
+
+const SCANNED_LANGUAGES = ["JavaScript", "TypeScript"];
+
+/**
+ * Why a shared repository cannot be scanned, found out by asking GitHub, or
+ * null when it can. Asked only when a price is about to be quoted: it is the
+ * last check before anyone pays, and nobody pays unless the repository is
+ * known to be public.
+ */
+export async function repositoryBlocker(
+  project: Pick<Project, "sourceType" | "fixtureKey" | "repositoryUrl">,
+): Promise<string | null> {
+  const target = targetOf(project);
+  if (!target?.source) return null;
+  const { exists, languages } = await probe(target.source);
+  if (exists === false) {
+    return "That repository was not found on GitHub, or it is not public. Only public repositories can be scanned.";
+  }
+  if (exists === null) {
+    return "GitHub could not be reached to confirm the repository is public. Nothing was charged; try again shortly.";
+  }
+  if (languages && !languages.some((language) => SCANNED_LANGUAGES.includes(language))) {
+    return "That repository has no JavaScript or TypeScript, which is what the security scan reads.";
   }
   return null;
 }
@@ -137,8 +223,9 @@ export async function enqueueTestingJob(purchaseId: string): Promise<TestingJob>
     if (!engagement.sellerProfileId || offering.sellerProfileId !== engagement.sellerProfileId) {
       throw conflict("The purchase does not belong to this engagement's seller.");
     }
-    if (project.sourceType !== "fixture" || !project.fixtureKey) {
-      throw conflict("Only the bundled sample projects can be tested.");
+    const target = targetOf(project);
+    if (!target || (target.source && !isRepositoryCapability(offering.capability))) {
+      throw conflict("This test cannot be run on this project.");
     }
 
     const [job] = await tx
@@ -150,7 +237,8 @@ export async function enqueueTestingJob(purchaseId: string): Promise<TestingJob>
         sellerProfileId: engagement.sellerProfileId,
         serviceOfferingId: offering.id,
         capability: offering.capability,
-        fixtureKey: project.fixtureKey,
+        fixtureKey: target.key,
+        source: target.source,
       })
       .returning();
     return job;
@@ -169,7 +257,13 @@ const claimInput = z
   })
   .strict();
 
-export type ClaimedJob = { id: string; fixtureKey: string; capability: string };
+export type ClaimedJob = {
+  id: string;
+  fixtureKey: string;
+  capability: string;
+  /** For a shared repository only: its owner and name. The worker builds the address itself. */
+  source?: { kind: "github"; owner: string; repo: string };
+};
 
 /** Put a job a worker stopped working on back in the queue, or give up on it after too many tries. */
 async function releaseJobs(tx: DbOrTx, where: ReturnType<typeof and>): Promise<void> {
@@ -238,7 +332,12 @@ export async function claimTestingJob(raw: unknown): Promise<ClaimedJob | null> 
         updatedAt: now,
       })
       .where(eq(testingJobs.id, next.id));
-    return { id: next.id, fixtureKey: next.fixtureKey, capability: next.capability };
+    return {
+      id: next.id,
+      fixtureKey: next.fixtureKey,
+      capability: next.capability,
+      ...(next.source ? { source: next.source } : {}),
+    };
   });
 }
 

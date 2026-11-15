@@ -21,7 +21,8 @@ The product was built in seven milestones, one at a time. All seven are built. W
 | 7 | End-to-end integration and deployment | **Complete** on simulated settlement; deployed. The live Qatom and GOAT runs await the items above |
 | 8 | Presentation and security findings | **Complete** |
 | 9 | ERC-8004 identity, ratings and validation | **Complete** on the platform; ratings reach GOAT's Reputation Registry once an engagement has a real wallet |
-| 10 | Proof on GOAT for every record | **Built**; writing to the chain awaits `GOAT_PROOFS` and a little test BTC in the proof wallet |
+| 10 | Proof on GOAT for every record | **Live** on GOAT Testnet3 |
+| 11 | Sharing your own code | **Complete**: a public GitHub repository can buy the security scan |
 
 ### What works today (Milestone 1)
 
@@ -144,6 +145,14 @@ ERC-8004 has three parts: identity, reputation and validation. All three now hav
 
 To switch it on, set `GOAT_PROOFS=testnet3` (the Privy credentials must be set too), redeploy, and press **Write waiting proofs to GOAT** on the Transactions page. The proof wallet's address then appears in Settings and on Transactions; send it a little test BTC on GOAT Testnet3.
 
+### What works today (Milestone 11)
+
+- **Your own repository.** A project that points at a public GitHub repository can buy the security scan. The worker downloads the repository's source, reads its JavaScript and TypeScript with the security rules, and reports each weakness with the code involved, the file and the line.
+- **Read, never run.** Nothing in a shared repository is installed, built or executed. Its own lint configuration and `eslint-disable` comments are ignored, and dependencies and build output are left out. Tests that execute a project's code (unit, regression, fuzz and the rest) are still for the bundled projects only, and a seller declines them for a repository before any payment.
+- **Nobody pays for a scan that cannot happen.** Before quoting, the seller's agent confirms with GitHub that the repository is public and contains JavaScript or TypeScript. If GitHub cannot be reached, it declines rather than guess.
+- **The job names a repository, not an address.** A worker is told an owner and a name and builds GitHub's address itself, so a job cannot send it anywhere else. Downloads are bounded in size and time; links and special files are stripped from what is unpacked before any tool sees it.
+- **A record of what was read.** The report names the repository and the exact commit, and says how many files were read.
+
 ### What is not live yet
 
 Everything below is built and tested; none of it has been run against the real service. Each needs something only the operator can do.
@@ -158,7 +167,7 @@ Everything below is built and tested; none of it has been run against the real s
 Other limits, by design for now:
 
 - The purchasing agent is scripted. There is no language model in the loop; the runtime, tools and policy engine it would sit behind are in place.
-- Tests run only against the two bundled fixtures. Running a buyer's own repository needs stronger sandboxing than is provided, and is not offered.
+- A buyer's own repository can be scanned, not run. Only JavaScript and TypeScript are read, only from public GitHub repositories, and only the default branch. Tests that execute code run against the two bundled fixtures.
 - A test that could not run can be re-run free of charge; it is not refunded. A payment to a seller is never reversed by the platform.
 - Listing activation is a command-line step. There is no operator console.
 - GOAT is Testnet3 only. The application refuses any other chain and the production payment API. Assets there have no monetary value.
@@ -248,7 +257,7 @@ buyer's agent ──pays──▶ purchase ──▶ testing job (queued)
 What keeps it contained:
 
 - **It holds one credential**, its own worker token. It is never given the database address, the session secret or any wallet or signing key, and it refuses to start if it finds one in its environment.
-- **A job names a fixture and a test type, nothing else.** What is actually executed comes from the worker's own table (`worker/src/plans.mjs`); no command, path or argument ever travels from the application to the worker.
+- **A job names what to test and a test type, nothing else.** What to test is a bundled fixture's key, or the owner and name of a public GitHub repository. What is actually executed comes from the worker's own table (`worker/src/plans.mjs`); no command, path or argument ever travels from the application to the worker.
 - **Each job gets a private copy** of the fixture, deleted afterwards, and runs with a scrubbed environment (the worker token is not passed to the tests), a hard time limit and bounded output.
 - **Reports are checked before they are stored.** Counts must add up, a run with failures cannot be reported as passed, and a report must come from the tool the job calls for. A report is text to be read: nothing in it can change a mandate, a budget or an engagement.
 
@@ -575,5 +584,7 @@ The GOAT suite runs against stand-ins for the chain, Privy and GOAT Flow. The ER
 - Reputation and validation: ratings limited to one to five stars, once per engagement, by the buyer's owner or admin, and only after something was bought; low ratings and reported problems opening one case at a time; the seller's single reply; the validator named only by the deployment's settings and invisible to everyone else; a verdict whose score has to agree with it, given once, never by someone on either side; a public reputation that carries no names or comments; registration documents that count only at this application's own address; a buying agent confirmed only by its own registration; and a rating written to GOAT once, from the engagement's wallet, and never re-sent when its outcome is unknown.
 
 - Proofs: one fingerprint per settled record, with private text left out; nothing sent and no wallet made while switched off; one transaction per batch carrying exactly the combined fingerprint; nothing counted as written until the chain has settled it; a failed, rejected or dropped batch written again; each record in one batch only under simultaneous requests; a proof failing its check when the record, its fingerprint or the transaction is altered; and a proof readable only by the organization whose record it is.
+
+- Shared repositories: a repository's code never being run, with such tests declined before payment; the scan quoted only when GitHub confirms the repository is public and has code to read; a job carrying an owner and a name and no address; names that are not GitHub's refused by the application and again by the worker; links and special files stripped from what is unpacked; and a real scan of a stand-in repository reporting only the project's own code.
 
 The testing suite also **executes the real tools** against the bundled fixtures, through the same worker code and submission path the application uses, and asserts the figures they report (for example, Vitest: 6 tests, 5 passed, 1 failed). The Vitest cases always run; the Foundry and Slither cases run when those tools are on `PATH` and are skipped otherwise.

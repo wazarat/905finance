@@ -1174,7 +1174,10 @@ export const testingJobs = pgTable(
       .references(() => serviceOfferings.id, { onDelete: "restrict" }),
     /** The test type. Together with the fixture it selects what the worker runs. */
     capability: text("capability").notNull(),
+    /** A bundled project's key, or "github" for a repository the buyer shared. */
     fixtureKey: text("fixture_key").notNull(),
+    /** The shared repository, by owner and name. Null for a bundled project. */
+    source: jsonb("source").$type<{ kind: "github"; owner: string; repo: string }>(),
     status: testingJobStatus("status").notNull().default("queued"),
     attempts: integer("attempts").notNull().default(0),
     claimedBy: text("claimed_by"),

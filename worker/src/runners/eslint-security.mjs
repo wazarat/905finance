@@ -93,6 +93,9 @@ const RULES = {
   },
 };
 
+const RANK = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+const MAX_FINDINGS = 200;
+
 /** Turn ESLint's JSON report into findings. Which rules fired, and where, comes from the report alone. */
 export function parseEslintReport(report, runDir) {
   const findings = [];
@@ -167,14 +170,33 @@ export async function runEslintSecurity({ runDir, target, timeoutMs, toolVersion
     };
   }
   if (report.length === 0) {
-    return { ...base, outcome: "error", error: "There was no source file to analyse.", findings: [] };
+    return {
+      ...base,
+      outcome: "error",
+      error: "There is no JavaScript or TypeScript source here for the security scan to read.",
+      findings: [],
+    };
   }
   // ESLint names files by their real path, which differs from runDir where a parent is a link.
-  const findings = parseEslintReport(report, await realpath(runDir).catch(() => runDir));
-  const serious = findings.some((f) => f.severity === "critical" || f.severity === "high" || f.severity === "medium");
+  const every = parseEslintReport(report, await realpath(runDir).catch(() => runDir));
+  // The most serious first, so that a long report is cut from the bottom.
+  const findings = every
+    .map((finding, index) => ({ finding, index }))
+    .sort((a, b) => RANK[a.finding.severity] - RANK[b.finding.severity] || a.index - b.index)
+    .map((entry) => entry.finding)
+    .slice(0, MAX_FINDINGS);
+  const serious = every.some((f) => f.severity === "critical" || f.severity === "high" || f.severity === "medium");
   return {
     ...base,
-    log: [`Analysed ${report.length} ${report.length === 1 ? "file" : "files"}.`, result.stderr].filter(Boolean).join("\n"),
+    log: [
+      `Analysed ${report.length} ${report.length === 1 ? "file" : "files"}.`,
+      every.length > findings.length
+        ? `${every.length} findings in all. The ${findings.length} most serious are listed; ${every.length - findings.length} less serious ones are not.`
+        : "",
+      result.stderr,
+    ]
+      .filter(Boolean)
+      .join("\n"),
     outcome: serious ? "failed" : "passed",
     findings,
   };

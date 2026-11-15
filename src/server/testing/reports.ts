@@ -180,6 +180,8 @@ export async function listEngagementJobs(actor: Actor | null, engagementId: stri
 
 export type TestingReport = JobLine & {
   fixtureKey: string;
+  /** The repository that was read, when the job was for one the buyer shared. */
+  repository: { owner: string; repo: string } | null;
   attempts: number;
   claimedAt: Date | null;
   execution: {
@@ -223,6 +225,7 @@ export async function getTestingReport(actor: Actor | null, jobId: string): Prom
   return {
     ...toJobLine(row, counts),
     fixtureKey: row.job.fixtureKey,
+    repository: row.job.source ? { owner: row.job.source.owner, repo: row.job.source.repo } : null,
     attempts: row.job.attempts,
     claimedAt: row.job.claimedAt,
     execution: row.result

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -23,6 +24,7 @@ import {
   provisionEngagementWallet,
   saveMandateDraft,
 } from "@/server/engagements";
+import { parseGitHubRepository } from "@/lib/repository";
 import { createProject } from "@/server/projects";
 import { answerAsSampleSeller } from "@/server/seller-agent/service";
 import { createOffering, saveSellerEndpoint, updateSellerListing } from "@/server/sellers";
@@ -35,6 +37,7 @@ import {
   getWorkerStatus,
   submitTestingResult,
   workerSupport,
+  setRepositoryProbe,
 } from "@/server/testing/jobs";
 import {
   getTestingOverview,
@@ -48,9 +51,10 @@ import { POST as resultRoute } from "@/app/api/worker/jobs/[id]/result/route";
 // The worker is plain JavaScript with no types of its own.
 import { childEnvironment } from "../worker/src/exec.mjs";
 import { executeJob } from "../worker/src/job.mjs";
-import { PLANS, supportedPairs } from "../worker/src/plans.mjs";
+import { PLANS, planFor, supportedPairs } from "../worker/src/plans.mjs";
 import { describeCounterexample, parseForgeTestReport } from "../worker/src/runners/forge.mjs";
 import { parseSlitherReport } from "../worker/src/runners/slither.mjs";
+import { LIMITS, repositoryOf, sanitizeTree, unpackArchive } from "../worker/src/repository.mjs";
 import { parseEslintReport, runEslintSecurity } from "../worker/src/runners/eslint-security.mjs";
 import { detectTools } from "../worker/src/tools.mjs";
 import {
@@ -83,6 +87,7 @@ let ledger: Seller;
 const NODE = "sample-node-api";
 const VAULT = "sample-solidity-vault";
 const NODE_PAIRS = ["unit_testing", "regression_testing", "api_testing"].map((c) => `${NODE}:${c}`);
+const REPO_PAIR = "github:security_scan";
 const VAULT_PAIRS = ["foundry_unit", "foundry_fuzz", "invariant_testing", "slither_static_analysis"].map(
   (c) => `${VAULT}:${c}`,
 );
@@ -233,6 +238,14 @@ const failingReport = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+/** Put every running job back in the queue, as if its worker had gone away. */
+async function releaseAll() {
+  await db
+    .update(schema.testingJobs)
+    .set({ status: "queued", claimedBy: null, claimedAt: null, leaseExpiresAt: null })
+    .where(eq(schema.testingJobs.status, "running"));
+}
+
 /** Everything queued by other tests is finished off, so each test sees only its own job. */
 async function drainQueue() {
   await db
@@ -261,22 +274,27 @@ beforeAll(async () => {
 });
 afterAll(async () => close());
 beforeEach(async () => {
+  // GitHub is never really asked in these tests. By default it says the repository is public and has code to scan.
+  setRepositoryProbe(async () => ({ exists: true, languages: ["TypeScript", "CSS"] }));
   setSellerTransportResolver((context) => new DemoSellerTransport(context));
   await db.delete(schema.testingWorkers);
   await drainQueue();
   await registerWorker(db, [...NODE_PAIRS, ...VAULT_PAIRS]);
 });
 afterEach(() => {
+  setRepositoryProbe(undefined);
   setSellerTransportResolver(undefined);
   delete process.env.WORKER_TOKEN;
 });
 
 describe("nobody pays for a test that cannot run", () => {
-  it("declines to quote for a project that is not a bundled fixture", async () => {
+  it("declines to run a shared repository's code, before any payment", async () => {
+    // A worker that can scan repositories is online, so the only thing in the way is the kind of test.
+    await registerWorker(db, [...NODE_PAIRS, REPO_PAIR]);
     const id = await engage(acme, relay, acme.repository);
-    const result = await run(acme, id);
+    const result = await run(acme, id, buying(relay, ["unit_testing"]));
     expect(result.run.purchasesCompleted).toBe(0);
-    expect(result.run.summary).toContain("bundled sample projects only");
+    expect(result.run.summary).toContain("runs the project's code");
     expect(await purchasesOf(id)).toEqual([]);
     expect(await jobsOf(id)).toEqual([]);
     expect(await getBudgetStatus(db, id)).toMatchObject({ spentUnits: 0n, walletBalanceUnits: 10000n });
@@ -310,6 +328,98 @@ describe("nobody pays for a test that cannot run", () => {
 
   it("does not offer Solidity testing against a project with no contracts", async () => {
     expect(await workerSupport(NODE, "foundry_unit")).toBe("unsupported");
+  });
+});
+
+describe("a shared repository", () => {
+  const scan = (id: string) => run(acme, id, buying(relay, ["security_scan"]));
+
+  it("can buy the security scan, and the job names the repository by owner and name only", async () => {
+    await registerWorker(db, [...NODE_PAIRS, REPO_PAIR]);
+    const id = await engage(acme, relay, acme.repository);
+    expect((await scan(id)).run.purchasesCompleted).toBe(1);
+    const [job] = await jobsOf(id);
+    expect(job).toMatchObject({
+      capability: "security_scan",
+      fixtureKey: "github",
+      source: { kind: "github", owner: "example", repo: "payments-api" },
+      status: "queued",
+    });
+    // The worker is told the repository, and still nothing about the buyer, the engagement or money.
+    const claimed = await claimTestingJob({ workerId: "repo-worker", tools: { eslint: "x" }, supports: [REPO_PAIR] });
+    expect(claimed).toEqual({
+      id: job.id,
+      fixtureKey: "github",
+      capability: "security_scan",
+      source: { kind: "github", owner: "example", repo: "payments-api" },
+    });
+    // A worker that cannot scan repositories is never given the job.
+    await releaseAll();
+    expect(await claimTestingJob({ workerId: "node-worker", tools: { vitest: "x" }, supports: NODE_PAIRS })).toBeNull();
+  });
+
+  it("is not charged for when no worker can scan repositories", async () => {
+    const id = await engage(acme, relay, acme.repository);
+    const result = await scan(id);
+    expect(result.run.purchasesCompleted).toBe(0);
+    expect(result.run.summary).toContain("No testing worker can run");
+    expect(await purchasesOf(id)).toEqual([]);
+  });
+
+  it("is not charged for unless GitHub confirms it is public and has code to read", async () => {
+    await registerWorker(db, [...NODE_PAIRS, REPO_PAIR]);
+    const cases: Array<[{ exists: boolean | null; languages: string[] | null }, string]> = [
+      [{ exists: false, languages: null }, "not public"],
+      [{ exists: null, languages: null }, "could not be reached"],
+      [{ exists: true, languages: ["Rust", "Shell"] }, "no JavaScript or TypeScript"],
+    ];
+    for (const [answer, words] of cases) {
+      setRepositoryProbe(async () => answer);
+      const id = await engage(acme, relay, acme.repository);
+      const result = await scan(id);
+      expect(result.run.purchasesCompleted, words).toBe(0);
+      expect(result.run.summary, words).toContain(words);
+      expect(await purchasesOf(id), words).toEqual([]);
+      expect(await getBudgetStatus(db, id)).toMatchObject({ spentUnits: 0n });
+    }
+    // GitHub saying nothing about languages is not a reason to refuse a repository it says is public.
+    setRepositoryProbe(async () => ({ exists: true, languages: null }));
+    expect((await scan(await engage(acme, relay, acme.repository))).run.purchasesCompleted).toBe(1);
+  });
+
+  it("has to be a GitHub repository's own address", async () => {
+    await registerWorker(db, [...NODE_PAIRS, REPO_PAIR]);
+    let asked = 0;
+    setRepositoryProbe(async () => {
+      asked += 1;
+      return { exists: true, languages: ["JavaScript"] };
+    });
+    const elsewhere = await createProject(acme.owner, acme.org, { ...validProject, name: "Elsewhere", repositoryUrl: "https://gitlab.com/example/payments-api" });
+    const id = await engage(acme, relay, elsewhere.id);
+    const result = await scan(id);
+    expect(result.run.purchasesCompleted).toBe(0);
+    expect(result.run.summary).toContain("Only a public GitHub repository");
+    expect(asked).toBe(0);
+
+    expect(parseGitHubRepository("https://github.com/Example-Org/payments.api.git")).toEqual({ owner: "Example-Org", repo: "payments.api" });
+    expect(parseGitHubRepository("https://github.com/example/payments-api/tree/main/src")).toEqual({ owner: "example", repo: "payments-api" });
+    for (const bad of [
+      "http://github.com/example/repo",
+      "https://github.com.evil.example/example/repo",
+      "https://evil.example/github.com/example/repo",
+      "https://user:pass@github.com/example/repo",
+      "https://github.com:8443/example/repo",
+      "https://github.com/example",
+      "https://github.com/example/..",
+      "https://github.com/-bad/repo",
+      "https://github.com/example/re po",
+      "https://raw.githubusercontent.com/example/repo/main/x.js",
+      "github.com/example/repo",
+      "",
+      null,
+    ]) {
+      expect(parseGitHubRepository(bad), String(bad)).toBeNull();
+    }
   });
 });
 
@@ -903,7 +1013,7 @@ describe("the worker is kept away from credentials", () => {
       "typescript",
       "vitest",
     ]);
-    for (const file of ["main", "job", "exec", "plans", "tools", "workspace", "runners/vitest", "runners/forge", "runners/slither", "runners/eslint-security"]) {
+    for (const file of ["main", "job", "exec", "plans", "tools", "workspace", "runners/vitest", "runners/forge", "runners/slither", "runners/eslint-security", "repository"]) {
       const source = await readFile(`worker/src/${file}.mjs`, "utf8");
       const imports = [...source.matchAll(/from\s+"([^"]+)"/g)].map((match) => match[1]);
       for (const specifier of imports) {
@@ -1170,6 +1280,100 @@ describe("real execution", () => {
       expect(result.outcome).toBe("failed");
       expect(result.findings).toHaveLength(1);
       expect(result.findings[0]).toMatchObject({ severity: "high", location: "src/sneaky.js:3" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!tools.eslint)("scans a shared repository by reading it, and records what was read", { timeout: 120_000 }, async () => {
+    await registerWorker(db, supportedPairs(tools), { workerId: "real-worker" });
+    const engagementId = await engage(acme, relay, acme.repository);
+    await run(acme, engagementId, buying(relay, ["security_scan"]));
+    const claimed = (await claimTestingJob({ workerId: "real-worker", tools, supports: supportedPairs(tools) }))!;
+    expect(claimed.source).toEqual({ kind: "github", owner: "example", repo: "payments-api" });
+    // In place of GitHub: a small repository with one weakness, a file to leave alone, and a link out of the tree.
+    let fetched: unknown = null;
+    const result = await executeJob(claimed, tools, {
+      fetchSource: async (source, runDir) => {
+        fetched = source;
+        await mkdir(path.join(runDir, "src"), { recursive: true });
+        await mkdir(path.join(runDir, "node_modules", "left-pad"), { recursive: true });
+        await writeFile(path.join(runDir, "src", "run.ts"), "export function run(input: string) {\n  return eval(input);\n}\n");
+        await writeFile(path.join(runDir, "node_modules", "left-pad", "index.js"), "module.exports = (x) => eval(x);\n");
+        await writeFile(path.join(runDir, "package.json"), JSON.stringify({ scripts: { postinstall: "touch /tmp/should-never-exist-905" } }));
+        return { name: "example/payments-api", revision: "a".repeat(40), files: 3 };
+      },
+    });
+    expect(fetched).toEqual(claimed.source);
+    expect(result).toMatchObject({ outcome: "failed", tool: "eslint" });
+    // Only the project's own code is reported on, and nothing it declares was run.
+    expect(result.findings.map((f: { location: string }) => f.location)).toEqual(["src/run.ts:2"]);
+    expect(result.log).toContain(`Read github.com/example/payments-api at commit ${"a".repeat(40)}`);
+    expect(result.log).toContain("Nothing in it was installed, built or run");
+    await expect(readFile("/tmp/should-never-exist-905")).rejects.toThrow();
+
+    await submitTestingResult(claimed.id, { workerId: "real-worker", result });
+    const report = await getTestingReport(acme.owner, claimed.id);
+    expect(report.repository).toEqual({ owner: "example", repo: "payments-api" });
+    expect(report.findings[0].code!.lines.join("\n")).toContain("eval(input)");
+    expect((await purchaseById(report.purchaseId)).status).toBe("delivered");
+  });
+
+  it("reports a repository it could not fetch as a run that did not happen", async () => {
+    const job = { id: randomUUID(), fixtureKey: "github", capability: "security_scan", source: { kind: "github", owner: "example", repo: "gone" } };
+    const result = await executeJob(job, { eslint: "eslint 9" }, {
+      fetchSource: async () => {
+        throw new Error("The repository was not found, or it is not public.");
+      },
+    });
+    expect(result).toMatchObject({ outcome: "error", findings: [] });
+    expect(result.error).toContain("not found");
+    // Only reading is on offer for a shared repository: nothing that would run it.
+    expect(planFor("github", "security_scan")).toMatchObject({ tool: "eslint" });
+    for (const capability of ["unit_testing", "foundry_fuzz", "slither_static_analysis", "regression_testing"]) {
+      expect(planFor("github", capability), capability).toBeNull();
+    }
+  });
+
+  it("builds the repository's address itself, from a plain owner and name", () => {
+    expect(repositoryOf({ kind: "github", owner: "example", repo: "payments-api" })).toEqual({ owner: "example", repo: "payments-api" });
+    for (const bad of [
+      { kind: "github", owner: "../..", repo: "etc" },
+      { kind: "github", owner: "example", repo: ".." },
+      { kind: "github", owner: "example", repo: "a/b" },
+      { kind: "github", owner: "example.com/x", repo: "repo" },
+      { kind: "github", owner: "example", repo: "repo?x=1" },
+      { kind: "github", owner: "example", repo: "repo.git" },
+      { kind: "gitlab", owner: "example", repo: "repo" },
+      { kind: "github", owner: "example", repo: 7 },
+      { kind: "github", url: "https://evil.example/x.tar.gz" },
+      null,
+    ]) {
+      expect(repositoryOf(bad), JSON.stringify(bad)).toBeNull();
+    }
+  });
+
+  it("strips links and special files from what it unpacks, and refuses a tree that is too large", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "unpack-"));
+    try {
+      const source = path.join(dir, "repo-main");
+      await mkdir(path.join(source, "src"), { recursive: true });
+      await writeFile(path.join(source, "src", "a.js"), "export const a = 1;\n");
+      await symlink("/etc/passwd", path.join(source, "src", "secrets"));
+      await symlink("/", path.join(source, "root"));
+      const archive = path.join(dir, "repo.tar.gz");
+      execFileSync("tar", ["-czf", archive, "-C", dir, "repo-main"]);
+
+      const target = path.join(dir, "out");
+      expect(await unpackArchive(archive, target)).toMatchObject({ files: 1 });
+      expect(await readFile(path.join(target, "src", "a.js"), "utf8")).toContain("export const a");
+      await expect(lstat(path.join(target, "src", "secrets"))).rejects.toThrow();
+      await expect(lstat(path.join(target, "root"))).rejects.toThrow();
+
+      const before = { ...LIMITS };
+      LIMITS.files = 0;
+      await expect(sanitizeTree(target)).rejects.toThrow("too large");
+      Object.assign(LIMITS, before);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

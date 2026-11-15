@@ -27,7 +27,19 @@ export const PLANS = {
 };
 
 /** @returns {Plan | null} */
+/**
+ * What may be done to a repository someone shared. Only tools that read code
+ * are here: nothing in a shared repository is ever installed, built or run.
+ */
+export const REPOSITORY = "github";
+export const REPOSITORY_PLANS = {
+  security_scan: { tool: "eslint", runner: "eslint-security", target: ".", timeoutMs: 240_000 },
+};
+
 export function planFor(fixtureKey, capability) {
+  if (fixtureKey === REPOSITORY) {
+    return Object.hasOwn(REPOSITORY_PLANS, capability) ? REPOSITORY_PLANS[capability] : null;
+  }
   if (!Object.hasOwn(PLANS, fixtureKey)) return null;
   const forFixture = PLANS[fixtureKey];
   return Object.hasOwn(forFixture, capability) ? forFixture[capability] : null;
@@ -44,6 +56,9 @@ export function supportedPairs(tools) {
     for (const [capability, plan] of Object.entries(capabilities)) {
       if (tools[plan.tool]) pairs.push(`${fixtureKey}:${capability}`);
     }
+  }
+  for (const [capability, plan] of Object.entries(REPOSITORY_PLANS)) {
+    if (tools[plan.tool]) pairs.push(`${REPOSITORY}:${capability}`);
   }
   return pairs;
 }

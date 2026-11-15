@@ -59,7 +59,7 @@ export type SellerTransportContext = {
   seller: Pick<SellerProfile, "id" | "slug" | "displayName" | "isSample">;
   offerings: ServiceOffering[];
   /** The project the engagement is for. */
-  project: Pick<Project, "sourceType" | "fixtureKey">;
+  project: Pick<Project, "sourceType" | "fixtureKey" | "repositoryUrl">;
   rail: PaymentRail;
   asset: AssetInfo;
   /** The transaction the caller is in, if any, so that lookups here join it rather than wait on it. */

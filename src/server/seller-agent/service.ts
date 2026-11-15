@@ -9,7 +9,7 @@ import { offeringPriceUnits } from "../budget";
 import { isAppError } from "../errors";
 import { verifiedReceivingWallet } from "../identity";
 import { simulatedRecipient } from "../payments/registry";
-import { enqueueTestingJob, fulfilmentBlocker } from "../testing/jobs";
+import { enqueueTestingJob, fulfilmentBlocker, repositoryBlocker } from "../testing/jobs";
 
 const {
   engagements,
@@ -89,7 +89,7 @@ export async function answerAsSampleSeller(
     );
     if (price === null) return refuse("That service cannot be priced.");
     // Decline before any payment if the test could not actually be run.
-    const blocker = await fulfilmentBlocker(project, offering.capability);
+    const blocker = (await fulfilmentBlocker(project, offering.capability)) ?? (await repositoryBlocker(project));
     if (blocker) return refuse(blocker);
     // Where the seller asks to be paid: its simulated account, or, for an
     // engagement that settles on GOAT, the wallet its confirmed identity names.

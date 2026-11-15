@@ -7,12 +7,40 @@ import security from "eslint-plugin-security";
  * its inline "eslint-disable" comments are ignored, so the code being scanned
  * cannot switch a rule off.
  */
-const rules = Object.fromEntries(Object.keys(security.rules).map((name) => [`security/${name}`, "error"]));
+/**
+ * Left out: detect-object-injection flags every property read with a computed
+ * key, which in ordinary code is nearly all of them, and buries the rest.
+ */
+const LEFT_OUT = new Set(["detect-object-injection"]);
+const rules = Object.fromEntries(
+  Object.keys(security.rules)
+    .filter((name) => !LEFT_OUT.has(name))
+    .map((name) => [`security/${name}`, "error"]),
+);
 
 const config = [
   {
+    // Code a project did not write, or did not write by hand.
+    ignores: [
+      "**/node_modules/**",
+      "**/vendor/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/*.min.js",
+      "**/*.d.ts",
+    ],
+  },
+  {
     files: ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"],
-    languageOptions: { parser, ecmaVersion: "latest", sourceType: "module" },
+    languageOptions: {
+      parser,
+      ecmaVersion: "latest",
+      sourceType: "module",
+      parserOptions: { ecmaFeatures: { jsx: true } },
+    },
     linterOptions: { reportUnusedDisableDirectives: "off" },
     plugins: { security },
     rules,

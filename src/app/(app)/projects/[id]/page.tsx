@@ -8,6 +8,7 @@ import { PageHeader, Panel } from "@/components/app/page-header";
 import { CapabilityChip, Web3Badge } from "@/components/sellers/badges";
 import { Button } from "@/components/ui/button";
 import { capabilitiesForProject, getFixture } from "@/lib/capabilities";
+import { parseGitHubRepository } from "@/lib/repository";
 import { roleHasPermission } from "@/server/authz";
 import { isAppError } from "@/server/errors";
 import { requireWorkspace } from "@/server/page-context";
@@ -70,7 +71,14 @@ async function ProjectContent({ params }: PageProps<"/projects/[id]">) {
                 {fixture ? <span className="block text-muted-foreground">{fixture.description}</span> : null}
               </>
             ) : (
-              <span className="figure text-[0.8125rem]">{project.repositoryUrl}</span>
+              <>
+                <span className="figure text-[0.8125rem] break-all">{project.repositoryUrl}</span>
+                <span className="mt-1 block text-muted-foreground">
+                  {parseGitHubRepository(project.repositoryUrl)
+                    ? "A shared repository can be scanned for security weaknesses. It is read, never run; tests that execute code are for the bundled projects."
+                    : "Only a public GitHub repository can be scanned. Nothing can be bought for this address."}
+                </span>
+              </>
             )}
           </Row>
           <Row label="Application URL">

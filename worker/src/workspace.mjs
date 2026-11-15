@@ -31,6 +31,14 @@ export async function prepareRunDirectory(fixtureKey, jobId) {
   return runDir;
 }
 
+/** An empty private directory for one job that brings its own source. */
+export async function prepareEmptyRunDirectory(jobId) {
+  const safeId = String(jobId).replace(/[^a-zA-Z0-9-]/g, "");
+  const runDir = path.join(workerRoot, ".runs", `${safeId}-${Date.now()}`);
+  await mkdir(runDir, { recursive: true });
+  return runDir;
+}
+
 export async function removeRunDirectory(runDir) {
   await rm(runDir, { recursive: true, force: true });
 }

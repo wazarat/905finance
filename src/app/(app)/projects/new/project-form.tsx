@@ -72,7 +72,9 @@ export function ProjectForm() {
                 className="sr-only"
               />
               <span className="font-medium text-foreground">My repository</span>
-              <span className="mt-1 text-sm text-muted-foreground">Link a repository you control.</span>
+              <span className="mt-1 text-sm text-muted-foreground">
+                Share a public GitHub repository. It is read for security weaknesses and never run.
+              </span>
             </label>
             <label className={choiceCard}>
               <input
@@ -85,7 +87,7 @@ export function ProjectForm() {
               />
               <span className="font-medium text-foreground">Bundled test fixture</span>
               <span className="mt-1 text-sm text-muted-foreground">
-                Use a sample project with known defects.
+                A project with known defects. Every kind of test can run on it.
               </span>
             </label>
           </div>
@@ -96,7 +98,7 @@ export function ProjectForm() {
           <Field
             id="repositoryUrl"
             label="Repository URL"
-            hint="An https:// address, for example https://github.com/your-org/your-repo"
+            hint="A public GitHub repository, for example https://github.com/your-org/your-repo. Only the security scan runs on your own code: it reads the JavaScript and TypeScript and executes nothing."
             errors={errors.repositoryUrl}
           >
             <Input

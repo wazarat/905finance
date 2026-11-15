@@ -218,7 +218,22 @@ async function ReportContent({ params }: { params: Promise<{ jobId: string }> })
               {report.projectName}
             </Link>
             <span className="block text-xs text-muted-foreground">
-              Bundled fixture · {getFixture(report.fixtureKey)?.label ?? report.fixtureKey}
+              {report.repository ? (
+                <>
+                  Shared repository ·{" "}
+                  <a
+                    href={`https://github.com/${report.repository.owner}/${report.repository.repo}`}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="underline underline-offset-4 hover:text-foreground"
+                  >
+                    {report.repository.owner}/{report.repository.repo}
+                  </a>
+                  . Read, never run.
+                </>
+              ) : (
+                <>Bundled fixture · {getFixture(report.fixtureKey)?.label ?? report.fixtureKey}</>
+              )}
             </span>
             <span className="figure block text-xs break-all text-muted-foreground">{report.projectId}</span>
           </Fact>

@@ -1,0 +1,1 @@
+ALTER TABLE "testing_jobs" ADD COLUMN "source" jsonb;

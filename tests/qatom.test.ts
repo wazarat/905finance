@@ -674,7 +674,7 @@ describe("which channel an engagement uses", () => {
     organizationId: buyer.org,
     seller: { id: seller.id, slug: seller.slug, displayName: "x", isSample: seller === relay },
     offerings: [],
-    project: { sourceType: "fixture" as const, fixtureKey: "sample-node-api" },
+    project: { sourceType: "fixture" as const, fixtureKey: "sample-node-api", repositoryUrl: null },
     rail: "goat" as const,
     asset: { code: "SIM-USD", decimals: 2 },
   });
