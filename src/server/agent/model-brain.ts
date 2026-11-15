@@ -94,8 +94,8 @@ A person has authorized you to buy services from ONE seller, within a budget, fo
 
 Rules:
 - Take exactly one step: call purchase_service for one service, or call finish.
-- Buy only what serves the buyer's stated scope. If the scope is broad, prefer services that have not been bought yet.
-- Do not buy the same service twice unless the scope clearly asks for it.
+- Buy only what serves the buyer's stated scope. Do not buy a service just because it is listed.
+- Every service under "services" has not been bought yet. Each can be bought once: after that it moves to "alreadyBought" and cannot be bought again.
 - A service must cost no more than the per-purchase limit, the budget remaining, and the funds available. If a service worth buying costs more than what remains, you may still propose it: the buyer will then be asked whether to raise the budget. Do not do this when "limitsAreFinal" is true.
 - If "buyerAskedFor" names a service, buy that one next.
 - When nothing more is worth buying, call finish with one or two plain sentences for the buyer saying what was bought and why you stopped.
@@ -139,11 +139,21 @@ const TOOLS = [
 const REQUEST_TIMEOUT_MS = 60_000;
 const clip = (value: unknown, length: number) => (typeof value === "string" ? value.trim().slice(0, length) : "");
 
-/** What the model is shown. Services are given short keys, since a model copies "S2" more reliably than an id. */
+/**
+ * What the model is shown. Services are given short keys, since a model copies "S2" more reliably than an id.
+ *
+ * A service that has been bought under the engagement is not offered again:
+ * it is listed as already bought, with what it delivered, and has no key to
+ * buy it by. Buying each thing once is not left to the model to remember.
+ * The one exception is a service the buyer has asked for by name.
+ */
 export function describeForModel(context: AgentContext): { brief: Record<string, unknown>; keys: Map<string, string> } {
   const keys = new Map<string, string>();
   const money = (units: string) => formatUnits(BigInt(units), context.asset);
-  const services = context.services.map((service, index) => {
+  const askedFor = context.directive?.offeringId;
+  const bought = context.services.filter((service) => service.timesPurchased > 0 && service.id !== askedFor);
+  const open = context.services.filter((service) => service.timesPurchased === 0 || service.id === askedFor);
+  const services = open.map((service, index) => {
     const key = `S${index + 1}`;
     keys.set(key, service.id);
     return {
@@ -153,8 +163,6 @@ export function describeForModel(context: AgentContext): { brief: Record<string,
       ...(service.description ? { description: service.description } : {}),
       ...(service.periodDays ? { worksOverDays: service.periodDays } : {}),
       price: money(service.priceUnits),
-      timesBought: service.timesPurchased,
-      ...(service.lastResult ? { lastResult: service.lastResult } : {}),
     };
   });
   const asked = context.directive ? [...keys].find(([, id]) => id === context.directive?.offeringId)?.[0] : undefined;
@@ -165,6 +173,14 @@ export function describeForModel(context: AgentContext): { brief: Record<string,
       scope: context.scope,
       ...(context.project ? { project: context.project } : {}),
       services,
+      ...(bought.length > 0
+        ? {
+            alreadyBought: bought.map((service) => ({
+              name: service.name,
+              ...(service.lastResult ? { result: service.lastResult } : {}),
+            })),
+          }
+        : {}),
       budget: {
         total: money(context.budget.totalUnits),
         perPurchaseLimit: money(context.budget.perTransactionUnits),
@@ -205,6 +221,17 @@ export class ModelBrain implements AgentBrain {
 
   async next(context: AgentContext): Promise<unknown> {
     const { brief, keys } = describeForModel(context);
+    // Nothing is left that could be bought, so there is nothing to ask the model.
+    if (keys.size === 0) {
+      return {
+        tool: "finish",
+        input: {
+          summary: context.services.some((service) => service.timesPurchased > 0)
+            ? "Each permitted service has been bought once under this engagement, so there is nothing more to buy."
+            : "Nothing that is permitted can be bought right now.",
+        },
+      };
+    }
     let response: Response;
     try {
       response = await this.send(`${this.config.baseUrl}/chat/completions`, {

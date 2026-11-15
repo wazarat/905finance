@@ -92,9 +92,12 @@ describe("what a language model is sent", () => {
       seller: "Vigil Web",
       scope: "Watch the public website for a few days.",
       project: { web3: false, shares: ["a website"] },
+      // What has been bought once is not offered again: it has no key to buy it by.
       services: [
-        { key: "S1", name: "Website first look", kind: "Website first look", price: "6.00 USD", timesBought: 1, lastResult: "The website check reported 6 findings: 2 medium, 2 low, 2 informational." },
-        { key: "S2", name: "Website watch, 5 days", kind: "Website first look", description: "Taken again on a schedule.", worksOverDays: 5, price: "20.00 USD", timesBought: 0 },
+        { key: "S1", name: "Website watch, 5 days", kind: "Website first look", description: "Taken again on a schedule.", worksOverDays: 5, price: "20.00 USD" },
+      ],
+      alreadyBought: [
+        { name: "Website first look", result: "The website check reported 6 findings: 2 medium, 2 low, 2 informational." },
       ],
       budget: { total: "100.00 USD", perPurchaseLimit: "25.00 USD", remaining: "94.00 USD", fundsAvailable: "94.00 USD" },
       limitsAreFinal: false,
@@ -111,13 +114,17 @@ describe("what a language model is sent", () => {
     expect((sent[0].body.tools as Array<{ function: { name: string } }>).map((tool) => tool.function.name)).toEqual(["purchase_service", "finish"]);
   });
 
-  it("names the service the buyer asked for instead, by its key", () => {
-    const { brief, keys } = describeForModel(context({ directive: { offeringId: SECOND } }));
-    expect(brief.buyerAskedFor).toBe("S2");
+  it("names the service the buyer asked for instead, by its key, even one bought before", () => {
+    expect([...describeForModel(context()).keys]).toEqual([["S1", SECOND]]);
+    expect(describeForModel(context({ directive: { offeringId: SECOND } })).brief.buyerAskedFor).toBe("S1");
+    // The buyer asking for a service again is the one way it is bought twice.
+    const { brief, keys } = describeForModel(context({ directive: { offeringId: FIRST } }));
     expect([...keys]).toEqual([
       ["S1", FIRST],
       ["S2", SECOND],
     ]);
+    expect(brief.buyerAskedFor).toBe("S1");
+    expect(brief).not.toHaveProperty("alreadyBought");
     expect(describeForModel(context()).brief).not.toHaveProperty("buyerAskedFor");
     expect(describeForModel(context()).brief).not.toHaveProperty("sellerSaid");
   });
@@ -137,22 +144,41 @@ describe("what a language model is sent", () => {
 
 describe("what is made of a language model's reply", () => {
   it("turns a tool call into a proposal for the service the key stands for", async () => {
-    const { brain } = standIn(calls("purchase_service", { service: "S2", reason: "The scope asks for several days." }));
+    const { brain } = standIn(calls("purchase_service", { service: "S1", reason: "The scope asks for several days." }));
     expect(await brain.next(context())).toEqual({
       tool: "purchase_service",
       input: { offeringId: SECOND, reason: "The scope asks for several days." },
     });
     const lower = standIn(calls("purchase_service", { service: "s1", reason: "x".repeat(900) }));
     const proposal = (await lower.brain.next(context())) as { input: { offeringId: string; reason: string } };
-    expect(proposal.input.offeringId).toBe(FIRST);
+    expect(proposal.input.offeringId).toBe(SECOND);
     expect(proposal.input.reason).toHaveLength(500);
+  });
+
+  it("cannot buy a second time what has been bought once, whatever the model says", async () => {
+    // The first look has been bought, so only the watch has a key. Asking for "S2" names nothing.
+    const again = standIn(calls("purchase_service", { service: "S2", reason: "Run the first look again." }));
+    expect(await again.brain.next(context())).toEqual({ tool: "purchase_service", input: { offeringId: "S2", reason: "Run the first look again." } });
+    // Once everything has been bought, the model is not even asked: the agent finishes.
+    const done = standIn(calls("purchase_service", { service: "S1", reason: "Again." }));
+    const everything = context({ services: context().services.map((service) => ({ ...service, timesPurchased: 1 })) });
+    expect(await done.brain.next(everything)).toEqual({
+      tool: "finish",
+      input: { summary: "Each permitted service has been bought once under this engagement, so there is nothing more to buy." },
+    });
+    expect(done.sent).toEqual([]);
+    expect(await done.brain.next(context({ services: [] }))).toEqual({
+      tool: "finish",
+      input: { summary: "Nothing that is permitted can be bought right now." },
+    });
+    expect(done.sent).toEqual([]);
   });
 
   it("reads a step a model wrote out in words instead of calling a tool", async () => {
     const written = standIn({ role: "assistant", content: 'I will stop here.\n{"tool": "finish", "input": {"summary": "The watch covers the scope."}}' });
     expect(await written.brain.next(context())).toEqual({ tool: "finish", input: { summary: "The watch covers the scope." } });
-    const flat = standIn({ role: "assistant", content: '```json\n{"name": "purchase_service", "arguments": {"service": "S1", "reason": "A first look."}}\n```' });
-    expect(await flat.brain.next(context())).toEqual({ tool: "purchase_service", input: { offeringId: FIRST, reason: "A first look." } });
+    const flat = standIn({ role: "assistant", content: '```json\n{"name": "purchase_service", "arguments": {"service": "S1", "reason": "A watch."}}\n```' });
+    expect(await flat.brain.next(context())).toEqual({ tool: "purchase_service", input: { offeringId: SECOND, reason: "A watch." } });
     // Some runners hand the arguments over already parsed.
     const parsed = standIn({ role: "assistant", tool_calls: [{ function: { name: "finish", arguments: { summary: "Done." } } }] });
     expect(await parsed.brain.next(context())).toEqual({ tool: "finish", input: { summary: "Done." } });
@@ -360,10 +386,17 @@ describe("a run decided by a language model", () => {
       boughtThisRun: 0,
     });
     expect(briefs[0].services).toEqual([
-      { key: "S1", name: "Website first look", kind: "Website first look", description: "One passive look.", price: "6.00 USD", timesBought: 0 },
-      { key: "S2", name: "Website watch, 5 days", kind: "Website first look", worksOverDays: 5, price: "20.00 USD", timesBought: 0 },
+      { key: "S1", name: "Website first look", kind: "Website first look", description: "One passive look.", price: "6.00 USD" },
+      { key: "S2", name: "Website watch, 5 days", kind: "Website first look", worksOverDays: 5, price: "20.00 USD" },
     ]);
-    expect(briefs[1]).toMatchObject({ boughtThisRun: 1, budget: { remaining: "94.00 USD" } });
+    expect(briefs[0]).not.toHaveProperty("alreadyBought");
+    // As soon as it is paid for, the first look is no longer something the model can buy.
+    expect(briefs[1]).toMatchObject({
+      boughtThisRun: 1,
+      budget: { remaining: "94.00 USD" },
+      services: [{ key: "S1", name: "Website watch, 5 days" }],
+      alreadyBought: [{ name: "Website first look" }],
+    });
     const everything = JSON.stringify(briefs);
     for (const hidden of ["Secret launch site", "example.com", "private-path", engagementId, org, seller.offering.look]) {
       expect(everything).not.toContain(hidden);
@@ -377,11 +410,38 @@ describe("a run decided by a language model", () => {
     });
     const later = scriptedModel([() => calls("finish", { summary: "Nothing more is needed." })]);
     await runAgent(buyer, engagementId, { runKey: randomUUID() }, later.brain);
-    expect((later.briefs[0].services as Array<Record<string, unknown>>)[0]).toMatchObject({
-      timesBought: 1,
-      lastResult: "The website check analysed the website and reported nothing.",
-    });
+    expect(later.briefs[0].alreadyBought).toEqual([
+      { name: "Website first look", result: "The website check analysed the website and reported nothing." },
+    ]);
     expect((await getEngagementActivity(buyer, engagementId)).agent).toEqual({ kind: "scripted" });
+  });
+
+  it("buys a service once, however often the model asks for the first thing on its list", async () => {
+    const engagementId = await engage();
+    // A model that never finishes and always asks for whatever is listed first.
+    const eager = () => scriptedModel([() => calls("purchase_service", { service: "S1", reason: "It matches the buyer's need." })]);
+    const first = eager();
+    const { run } = await runAgent(buyer, engagementId, { runKey: randomUUID() }, first.brain);
+    // Each of the two permitted services was bought once, and then the agent stopped by itself.
+    expect(run).toMatchObject({
+      status: "completed",
+      purchasesCompleted: 2,
+      summary: "Completed 2 purchases. Each permitted service has been bought once under this engagement, so there is nothing more to buy.",
+    });
+    expect((await purchasesOf(engagementId)).map((purchase) => purchase.offeringName).sort()).toEqual([
+      "Website first look",
+      "Website watch, 5 days",
+    ]);
+    // The model was asked twice, not a third time: there was nothing left to offer it.
+    expect(first.briefs).toHaveLength(2);
+    // Running the agent again buys nothing more, and asks for no approval.
+    const second = eager();
+    const again = await runAgent(buyer, engagementId, { runKey: randomUUID() }, second.brain);
+    expect(again.run).toMatchObject({ status: "completed", purchasesCompleted: 0 });
+    expect(second.briefs).toEqual([]);
+    expect(await purchasesOf(engagementId)).toHaveLength(2);
+    const [engagement] = await db.select().from(schema.engagements).where(eq(schema.engagements.id, engagementId));
+    expect(engagement.state).toBe("ACTIVE");
   });
 
   it("stops, buying nothing, when the model cannot be reached, and is not carried on by another agent", async () => {

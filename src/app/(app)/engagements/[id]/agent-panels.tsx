@@ -289,9 +289,11 @@ export function AgentPanel({
           activity.can.operate ? (
             <>
               <p className="max-w-xl text-sm leading-relaxed text-ink-soft">
-                Each run makes up to six purchases, then stops. The agent cannot change the budget,
-                the seller, the services or the wallet; if a purchase would exceed the budget it
-                stops and asks you.
+                {agent.kind === "model"
+                  ? "The agent buys a permitted service at most once under this engagement, and only if it serves the scope."
+                  : "Each run makes up to six purchases, then stops."}{" "}
+                The agent cannot change the budget, the seller, the services or the wallet; if a purchase would
+                exceed the budget it stops and asks you.
               </p>
               {/* A new key per page render, so a repeated click starts one run. */}
               <RunAgentForm
