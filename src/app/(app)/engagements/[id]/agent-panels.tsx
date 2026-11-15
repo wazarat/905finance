@@ -202,7 +202,7 @@ export function AgentPanel({
   sellerName: string;
   activity: EngagementActivity;
 }) {
-  const { lastRun, sellerConnection, testing } = activity;
+  const { lastRun, sellerConnection, testing, agent } = activity;
   const runnable = testing?.services.filter((service) => service.blocker === null) ?? [];
   const blocked = testing?.services.filter((service) => service.blocker !== null) ?? [];
   return (
@@ -238,7 +238,24 @@ export function AgentPanel({
           </div>
           <div>
             <dt className="text-muted-foreground">Agent</dt>
-            <dd className="mt-0.5 text-foreground">Scripted agent, no language model</dd>
+            {agent.kind === "model" ? (
+              <dd className="mt-0.5 text-foreground">
+                Decides with <span className="figure break-all">{agent.model}</span>, a language model served by{" "}
+                <span className="figure break-all">{agent.host}</span>
+                <span className="mt-1 block text-sm text-muted-foreground">
+                  It is sent the scope, the services and prices, and what is left to spend. It is never sent a
+                  wallet, a key or your code. It can only propose: every purchase is still checked against the
+                  mandate.
+                </span>
+              </dd>
+            ) : (
+              <dd className="mt-0.5 text-foreground">
+                Scripted agent, no language model
+                <span className="mt-1 block text-sm text-muted-foreground">
+                  It buys each permitted service in turn. It does not read the scope.
+                </span>
+              </dd>
+            )}
           </div>
           {testing ? (
             <div className="sm:col-span-2">
@@ -443,6 +460,7 @@ const MESSAGE_KINDS: Record<string, string> = {
   payment_uncertain: "Payment outcome unknown",
   purchase_blocked: "Purchase blocked",
   tool_refused: "Agent action refused",
+  agent_unavailable: "Agent stopped",
 };
 
 function describe(message: MessageLine, sellerName: string): { who: string; what: string } {

@@ -540,15 +540,20 @@ describe("an agent that tries to exceed its authority", () => {
       [
         "asset",
         "budget",
+        "declined",
         "directive",
         "lastSellerNote",
         "limitsAreFinal",
+        "project",
         "purchasesThisRun",
         "scope",
         "sellerName",
         "services",
       ].sort(),
     );
+    // The project is described by its kind alone: no name, address or id.
+    expect(Object.keys(context.project!).sort()).toEqual(["shares", "web3"]);
+    expect(context.declined).toEqual([]);
     const text = JSON.stringify(context);
     for (const secret of ["sim-wallet:", "sim-master:", "providerRef", "privy", "idempotency"]) {
       expect(text, secret).not.toContain(secret);

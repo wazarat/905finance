@@ -25,6 +25,7 @@ The product was built in seven milestones, one at a time. All seven are built. W
 | 11 | Sharing your own code | **Complete**: a public GitHub repository can buy the security scan |
 | 12 | More ways to share, and a first look at each | **Complete**: a website, a few source files or contract addresses, each with its own first-look report |
 | 13 | Work over a period | **Complete**: a seller watches for 1, 5 or 10 days, with a first look straight away and one report at the end |
+| 14 | A purchasing agent that decides with a language model | **Built**: any open model served over the chat-completions interface; off until a model's address and name are set |
 
 ### What works today (Milestone 1)
 
@@ -194,6 +195,16 @@ To switch it on, set `GOAT_PROOFS=testnet3` (the Privy credentials must be set t
 - **Declined before payment where it makes no sense.** A bundled project and files shared once never change, so there is nothing to watch; a second watch of the same thing while one is running would read the same thing. In each case the seller declines and nothing is charged.
 - **Three more sellers.** Vigil Web, Longview and Driftline work over a period. A seller of its own can list work over a period too: the offering form asks when the work is done.
 
+### What works today (Milestone 14)
+
+- **A language model can decide what to buy.** Set `AGENT_MODEL_URL` and `AGENT_MODEL_NAME` and the purchasing agent reads the engagement's scope and chooses, one step at a time, which permitted service to buy and when to stop, giving its reason. Leave them empty and the agent is the scripted one, which buys each permitted service in turn.
+- **Any open model.** The model is reached over the chat-completions interface that hosted open-model services and local runners share, so which model and where it runs is a setting, not code. It needs to support tool calling. A key (`AGENT_MODEL_KEY`) is sent only if the host asks for one.
+- **What the model is sent.** The seller's name, the scope, each permitted service (name, kind, description, price, how often it was bought and a one-sentence result), the budget figures, the kind of project (Web3 or not, and what kind of thing it shares), and what the seller said. Services go by short keys such as `S1`.
+- **What it is never sent.** A wallet, a key, an address, a payment reference, the project's name or addresses, any code or finding, or any internal id.
+- **It only proposes.** Its reply is a proposal like any other: the runtime refuses anything that is not one of its two tools, and the policy engine checks every purchase against the mandate. What a seller says reaches the model marked as the seller's words; a model that is talked round can only have its proposal refused.
+- **No silent stand-in.** If the model cannot be reached, refuses its key or is over its limit, the run stops and says so. What was already bought stays bought, and the scripted agent does not take over unannounced.
+- **Shown to the buyer.** The engagement page names the model and the host it is served by, and says what is sent to it. Settings shows whether a model is in use.
+
 ### What is not live yet
 
 Everything below is built and tested; none of it has been run against the real service. Each needs something only the operator can do.
@@ -203,11 +214,13 @@ Everything below is built and tested; none of it has been run against the real s
 | Buying a test on the deployed site | Works only while a testing worker is running for it; otherwise sellers decline to quote and no payment is taken. | `WORKER_TOKEN` set on the site, and `pnpm worker:live up` (see [Serving a deployed site](#serving-a-deployed-site)) or the worker image hosted elsewhere |
 | Agent messages over Qatom | Tested against a stand-in built from Qatom's published behaviour | A free catalog item per seller in the Qatom dashboard, `QATOM_FULFILMENT_TOKEN` and `QATOM_SELLER_ITEMS`, and the owner signing in at Qatom from Settings |
 | Real wallets, payments and fund returns on GOAT Testnet3 | Tested against stand-ins for Privy, GOAT Flow and the chain | `PRIVY_APP_SECRET`, an approved GOAT Flow test merchant with a fee balance whose receiving address is the seller's registry wallet, test tokens, and a little test BTC for network fees |
+| A language model deciding purchases | Tested against a stand-in that answers in the chat-completions shape, not against a real model | `AGENT_MODEL_URL` and `AGENT_MODEL_NAME` for an open model that supports tool calling, and `AGENT_MODEL_KEY` if its host needs one |
 | A seller other than the platform's own answering an agent | Only the platform's seven sellers have a seller-side agent | A third-party seller endpoint that speaks the signed message format |
 
 Other limits, by design for now:
 
-- The purchasing agent is scripted. There is no language model in the loop; the runtime, tools and policy engine it would sit behind are in place.
+- The purchasing agent is scripted unless a language model is configured. A model changes what is bought and why; it does not change any test result, which always comes from the testing tool.
+- An open model is less reliable at calling tools than a large hosted one. A reply that is not a valid step is refused and recorded, and after three the run stops.
 - What a buyer shares of their own project is read, not run. Repositories must be public, on GitHub, and are read at the default branch. Tests that execute code run against the two bundled fixtures.
 - The Solidity pattern review recognises risky constructs by their shape, without compiling. It is a first look, not an audit: it does not follow value through a contract, and misses, for example, a reentrancy through `call{value: ...}` that Slither finds in the bundled vault.
 - The website first look reads one page and what that page is served with. It does not sign in, crawl or test for injection.
@@ -253,6 +266,7 @@ pnpm dev                     # http://localhost:3000
 | `NEXT_PUBLIC_APP_URL` | Public base URL of the app. |
 | `WORKER_TOKEN` | Shared secret the testing worker presents. At least 32 random characters (`openssl rand -hex 32`). While it is unset the worker endpoints refuse every request. |
 | `QATOM_FULFILMENT_TOKEN`, `QATOM_SELLER_ITEMS` | Optional. Turn on the Qatom channel for sample sellers. See [Qatom](#qatom). |
+| `AGENT_MODEL_URL`, `AGENT_MODEL_NAME`, `AGENT_MODEL_KEY` | Optional. Have a language model decide what the purchasing agent buys: the address of a chat-completions endpoint (https, or http for a runner on this machine), the model's name there, and a key if the host needs one. Empty means the scripted agent. |
 | `QATOM_ACCOUNT_CLIENT_ID`, `QATOM_ACCOUNT_CLIENT_SECRET` | Optional. Let the seller endpoint confirm each delivery with Qatom. |
 
 Secrets live in `.env.local`, which is git-ignored. Never commit them.
@@ -445,6 +459,7 @@ Import the repository in Vercel, then add these in **Project → Settings → En
 | `GOAT_PROOFS` | Optional. Set to `testnet3` to write every record's fingerprint to GOAT Testnet3. See Milestone 10 above. |
 | `PLATFORM_OPERATOR_EMAILS` | Optional. The sign-in email addresses of the people who decide validation cases, separated by commas. Without it, cases wait. |
 | `WORKER_TOKEN` | 32+ random characters, shared with the testing worker. Optional: without it, or with no worker running, sellers decline to quote and no test is bought. |
+| `AGENT_MODEL_URL`, `AGENT_MODEL_NAME`, `AGENT_MODEL_KEY` | Optional: a hosted open model for the purchasing agent. A deployed site cannot reach a model on your own computer, so this has to be a hosted endpoint. |
 
 The testing worker does not run on Vercel. Host the worker image somewhere that can reach the site (see [The testing worker](#the-testing-worker)).
 
@@ -635,5 +650,6 @@ The GOAT suite runs against stand-ins for the chain, Privy and GOAT Flow. The ER
 - Shared repositories: a repository's code never being run, with such tests declined before payment; the scan quoted only when GitHub confirms the repository is public and has code to read; a job carrying an owner and a name and no address; names that are not GitHub's refused by the application and again by the worker; links and special files stripped from what is unpacked; and a real scan of a stand-in repository reporting only the project's own code.
 - More ways to share: a project needing at least one of a repository, a website, files or addresses; file names, types and sizes being checked, and addresses stored once in their checked form; each first look sold only for what it reads and declined before payment otherwise; a worker being handed only the files its tool reads; the website check refusing private, local and numeric addresses on the first request and on every redirect, and never recording a cookie's value; the contract check against a stand-in chain for an account, an unpublished contract, an upgradeable one and published source; a project's own Solhint settings and disable comments being ignored; and every report getting a fingerprint fixed to its findings.
 - Work over a period: a watch's schedule and which reading is due when; a finding staying the same finding when only its line number or a count moved; findings sorted into stayed, appeared, resolved and came and went; a change in what was read being shown with both readings; a watch sold once, paid once and delivered only by its period report; a reading queued when it comes due and never twice; readings nobody took recorded as missed and never taken late; a watch that ends without its last reading still reporting what it has; a watch with no readings delivering and proving nothing; a watch declined before payment for a bundled project, for files shared once and while the same watch is running; the period report's fingerprint naming every reading with that reading's own findings hash; and a watch being visible to the organization that bought it and nobody else.
+- A language model as the agent: what it is sent and what it is never sent; a tool call, a written-out step and an already-parsed one each becoming a proposal; a made-up service or tool being passed on to be refused; the run stopping, with what was bought kept, when the model is unreachable, refuses its key or is over its limit, and no other agent taking over; a model that tries to raise the budget or move funds changing nothing; and the model's address being refused unless it is https or this machine.
 
 The testing suite also **executes the real tools** against the bundled fixtures, through the same worker code and submission path the application uses, and asserts the figures they report (for example, Vitest: 6 tests, 5 passed, 1 failed). The Vitest cases always run; the Foundry and Slither cases run when those tools are on `PATH` and are skipped otherwise.

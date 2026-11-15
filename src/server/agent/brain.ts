@@ -16,6 +16,13 @@ export type AgentService = {
   priceUnits: string;
   /** Purchases of this service already paid for in this engagement. */
   timesPurchased: number;
+  /** What kind of work it is, in words. */
+  kind?: string;
+  description?: string;
+  /** Days the seller keeps working, for work over a period. */
+  periodDays?: number;
+  /** What the last purchase of this service delivered, in a sentence built from the platform's own records. */
+  lastResult?: string;
 };
 
 export type AgentContext = {
@@ -37,12 +44,28 @@ export type AgentContext = {
   purchasesThisRun: number;
   /** The most recent thing the seller said, verbatim. Untrusted. */
   lastSellerNote: string | null;
+  /** What kind of project the engagement is for. No name, address or code. */
+  project?: { web3: boolean; shares: string[] };
+  /** Services the seller declined to quote for in this run, with its stated reason. Untrusted. */
+  declined?: Array<{ service: string; reason: string }>;
 };
 
 /** The tools an agent may call. There is no tool that changes a mandate, a seller, a rail or a wallet. */
 export type AgentToolCall =
   | { tool: "purchase_service"; input: { offeringId: string; quantity?: number; reason: string } }
   | { tool: "finish"; input: { summary: string } };
+
+/**
+ * Thrown by a brain that could not decide at all, because whatever it decides
+ * with could not be reached. The run stops and says so: it is never quietly
+ * carried on by a different agent.
+ */
+export class BrainUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BrainUnavailableError";
+  }
+}
 
 export interface AgentBrain {
   readonly name: string;

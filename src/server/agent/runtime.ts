@@ -12,7 +12,14 @@ import { withEngagement } from "../engagement-core";
 import { conflict, invalid, isAppError } from "../errors";
 import { executePurchase, recordDelivery } from "../policy";
 import { getWalletProvider } from "../wallets/registry";
-import { ScriptedBrain, type AgentBrain, type AgentContext, type AgentToolCall } from "./brain";
+import { capabilityLabel } from "@/lib/capabilities";
+import {
+  BrainUnavailableError,
+  ScriptedBrain,
+  type AgentBrain,
+  type AgentContext,
+  type AgentToolCall,
+} from "./brain";
 import {
   resolveSellerTransport,
   type AgentToSeller,
@@ -111,6 +118,8 @@ type RunSetup = {
   scope: string;
   asset: AssetInfo;
   transport: SellerTransport | null;
+  /** What kind of project this is, for the brain. Null for a replayed run, which decides nothing. */
+  project: AgentContext["project"] | null;
 };
 
 async function platformNote(
@@ -218,7 +227,7 @@ async function buildContext(
   const budget = await getBudgetStatus(db, engagementId);
   if (!budget) return null;
 
-  const offerings = (
+  const allPermitted = (
     await db
       .select({ offering: serviceOfferings })
       .from(mandatePermittedOfferings)
@@ -227,15 +236,22 @@ async function buildContext(
         and(eq(mandatePermittedOfferings.mandateId, budget.mandateId), eq(serviceOfferings.isActive, true)),
       )
       .orderBy(asc(serviceOfferings.name))
-  )
-    .map((row) => row.offering)
-    // A service the seller has declined in this run is not offered to the brain again.
-    .filter((offering) => !declined.has(offering.id));
+  ).map((row) => row.offering);
+  // A service the seller has declined in this run is not offered to the brain again.
+  const offerings = allPermitted.filter((offering) => !declined.has(offering.id));
 
   const bought = await db
-    .select({ offeringId: purchases.serviceOfferingId })
+    .select({ offeringId: purchases.serviceOfferingId, delivery: purchases.delivery })
     .from(purchases)
-    .where(and(eq(purchases.engagementId, engagementId), inArray(purchases.status, ["paid", "delivered"])));
+    .where(and(eq(purchases.engagementId, engagementId), inArray(purchases.status, ["paid", "delivered"])))
+    .orderBy(asc(purchases.sequence));
+  /** The last thing each service delivered, as the platform summarised it from the tool's own figures. */
+  const lastResult = new Map<string, string>();
+  for (const purchase of bought) {
+    if (typeof purchase.delivery?.summary === "string") {
+      lastResult.set(purchase.offeringId, purchase.delivery.summary.slice(0, 300));
+    }
+  }
 
   const decided = await db
     .select()
@@ -262,6 +278,10 @@ async function buildContext(
             name: offering.name,
             priceUnits: price.toString(),
             timesPurchased: bought.filter((b) => b.offeringId === offering.id).length,
+            kind: capabilityLabel(offering.capability),
+            ...(offering.description ? { description: offering.description.slice(0, 300) } : {}),
+            ...(offering.periodDays ? { periodDays: offering.periodDays } : {}),
+            ...(lastResult.has(offering.id) ? { lastResult: lastResult.get(offering.id) } : {}),
           },
         ];
   });
@@ -285,6 +305,11 @@ async function buildContext(
       limitsAreFinal: latest !== undefined && latest.status !== "approved",
       purchasesThisRun,
       lastSellerNote,
+      ...(setup.project ? { project: setup.project } : {}),
+      declined: [...declined].map(([offeringId, reason]) => ({
+        service: allPermitted.find((offering) => offering.id === offeringId)?.name ?? "A service",
+        reason,
+      })),
     },
   };
 }
@@ -316,6 +341,7 @@ async function startRun(
         scope: mandate?.scope ?? "",
         asset: { code: mandate?.asset ?? "", decimals: mandate?.assetDecimals ?? 0 },
         transport: null,
+        project: null,
       };
     }
 
@@ -381,6 +407,17 @@ async function startRun(
       scope: mandate.scope,
       asset,
       transport,
+      project: {
+        web3: project.hasWeb3,
+        shares:
+          project.sourceType === "fixture"
+            ? ["a bundled sample project"]
+            : [
+                project.repositoryUrl ? "a public GitHub repository" : "",
+                project.applicationUrl ? "a website" : "",
+                project.contractAddresses.length > 0 ? "contract addresses" : "",
+              ].filter(Boolean),
+      },
     };
   });
 }
@@ -440,7 +477,15 @@ export async function runAgent(
       let proposal: unknown;
       try {
         proposal = await brain.next(built.context);
-      } catch {
+      } catch (error) {
+        if (error instanceof BrainUnavailableError) {
+          // Whatever the agent decides with is not there. The run stops here
+          // and says so; no other agent takes over without the buyer knowing.
+          status = "failed";
+          summary = `Stopped: ${error.message} Nothing more was bought.`;
+          await platformNote(engagementId, setup.run.id, "agent_unavailable", { message: error.message });
+          break;
+        }
         proposal = null;
       }
       const parsed = toolCall.safeParse(proposal);

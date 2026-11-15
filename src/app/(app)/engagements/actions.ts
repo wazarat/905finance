@@ -11,6 +11,7 @@ import {
   provisionEngagementWallet,
   saveMandateDraft,
 } from "@/server/engagements";
+import { currentBrain } from "@/server/agent/model-brain";
 import { runAgent } from "@/server/agent/runtime";
 import { approveBudgetIncrease, modifyProposedWork, rejectApproval } from "@/server/approvals";
 import { isAppError } from "@/server/errors";
@@ -155,9 +156,12 @@ export async function runAgentAction(_prev: FormState, formData: FormData): Prom
   let ok: boolean;
   try {
     const { actor } = await requireActionWorkspace();
-    const { run } = await runAgent(actor, text(formData, "engagementId"), {
-      runKey: text(formData, "runKey"),
-    });
+    const { run } = await runAgent(
+      actor,
+      text(formData, "engagementId"),
+      { runKey: text(formData, "runKey") },
+      currentBrain(),
+    );
     summary = run.summary;
     ok = run.status !== "failed";
   } catch (error) {

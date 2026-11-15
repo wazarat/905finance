@@ -11,6 +11,7 @@ import type {
 import { describeResult } from "@/lib/testing";
 import type { AssetInfo } from "@/lib/units";
 import type { WatchStatus } from "@/lib/watch";
+import { describeAgent, type AgentDescription } from "./agent/model-brain";
 import { resolveSellerTransport } from "./agent/transport";
 import { toApprovalSummary, type ApprovalSummary } from "./approvals";
 import { assertAuthenticated, isUuid, requirePermissionOnRecord, roleHasPermission, type Actor } from "./authz";
@@ -87,6 +88,8 @@ export type EngagementActivity = {
   alternatives: Array<{ id: string; name: string; priceUnits: bigint }>;
   messages: MessageLine[];
   lastRun: AgentRun | null;
+  /** Who decides what the agent buys: the scripted agent, or a language model and where it is served from. */
+  agent: AgentDescription;
   /** How the seller's agent is reached, or null when it is not connected. */
   sellerConnection: { description: string; simulated: boolean; channel: "in_app" | "qatom" } | null;
   /** Whether the tests this engagement may buy can be executed right now. Null when no seller is connected. */
@@ -278,6 +281,7 @@ export async function getEngagementActivity(
       createdAt: m.createdAt,
     })),
     lastRun: lastRun ?? null,
+    agent: describeAgent(),
     sellerConnection: transport
       ? {
           description: transport.description,

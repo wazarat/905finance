@@ -1,6 +1,7 @@
 import "server-only";
 import { GOAT_TESTNET3 } from "@/lib/goat";
 import { requirePermission, type Actor } from "./authz";
+import { agentModelGaps, describeAgent } from "./agent/model-brain";
 import { isDevAuthEnabled, privyServerConfig, sessionSecretOrNull, workerToken } from "./env";
 import { goatLiveConfig, goatLiveGaps } from "./goat/live";
 import { qatomAccountCredentials, qatomFulfilmentToken, qatomSellerItems } from "./qatom/config";
@@ -39,6 +40,8 @@ export async function getIntegrationStatus(actor: Actor | null, organizationId: 
   const qatomSecret = qatomFulfilmentToken() !== null;
   const goat = goatLiveConfig();
   const proofs = await getProofStatus();
+  const agent = describeAgent();
+  const agentGaps = agentModelGaps();
 
   return [
     {
@@ -65,6 +68,22 @@ export async function getIntegrationStatus(actor: Actor | null, organizationId: 
         ...(workerConfigured ? [] : ["WORKER_TOKEN"]),
         ...(worker.online ? [] : ["a running testing worker pointed at this site"]),
       ]),
+    },
+    {
+      name: "Purchasing agent",
+      role: "Decides what to buy",
+      state: agent.kind === "model" ? "live" : agentGaps.length > 0 ? "partial" : "simulated",
+      summary:
+        agent.kind === "model"
+          ? `Decides with the language model ${agent.model}, served by ${agent.host}. Every purchase is still checked against the mandate.`
+          : "Scripted: buys each permitted service in turn. No language model reads the scope.",
+      missing: forOwner(
+        agent.kind === "model"
+          ? []
+          : agentGaps.length > 0
+            ? agentGaps
+            : ["AGENT_MODEL_URL and AGENT_MODEL_NAME (an open model's address and name), to have a language model decide"],
+      ),
     },
     {
       name: "Qatom",
