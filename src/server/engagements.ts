@@ -808,6 +808,7 @@ export type EngagementDetail = {
       description: string;
       capability: string;
       billingUnit: BillingUnit;
+      periodDays: number | null;
       priceMinor: number;
       currency: string;
       isActive: boolean;
@@ -955,6 +956,7 @@ export async function getEngagementDetail(
         description: o.description,
         capability: o.capability,
         billingUnit: o.billingUnit,
+        periodDays: o.periodDays,
         priceMinor: o.priceMinor,
         currency: o.currency,
         isActive: o.isActive,

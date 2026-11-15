@@ -11,14 +11,15 @@ import { AutoRefresh } from "@/components/testing/auto-refresh";
 import { JobBadge, SeverityBadge, SeverityTally } from "@/components/testing/badges";
 import { CodeExcerpt } from "@/components/testing/code-excerpt";
 import { Button } from "@/components/ui/button";
-import { capabilityLabel, getFixture, railLabel } from "@/lib/capabilities";
+import { capabilityLabel, railLabel } from "@/lib/capabilities";
 import { FINDING_CATEGORY_LABELS, JOB_STATUS_LABELS, formatDuration, toolLabel } from "@/lib/testing";
 import { formatUnits } from "@/lib/units";
 import { roleHasPermission } from "@/server/authz";
 import { isAppError } from "@/server/errors";
 import { requireWorkspace } from "@/server/page-context";
 import { ProofTag } from "@/components/proofs/proof-tag";
-import type { JobSource } from "@/db/schema";
+import { Subject } from "@/components/testing/subject";
+import { periodLabel } from "@/lib/watch";
 import { listProofs } from "@/server/proofs";
 import { getTestingReport, type TestingReport } from "@/server/testing/reports";
 
@@ -34,46 +35,6 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="mt-1 text-sm break-words text-foreground">{children}</dd>
     </div>
-  );
-}
-
-/** What the job looked at: a bundled project, or something the buyer shared. */
-function Subject({ source, fixtureKey }: { source: JobSource | null; fixtureKey: string }) {
-  if (!source) return <>Bundled fixture · {getFixture(fixtureKey)?.label ?? fixtureKey}</>;
-  if (source.kind === "github") {
-    return (
-      <>
-        Shared repository ·{" "}
-        <a
-          href={`https://github.com/${source.owner}/${source.repo}`}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="underline underline-offset-4 hover:text-foreground"
-        >
-          {source.owner}/{source.repo}
-        </a>
-        . Read, never run.
-      </>
-    );
-  }
-  if (source.kind === "files") return <>Shared files. Read, never run.</>;
-  if (source.kind === "website") {
-    return (
-      <>
-        Website · <span className="figure break-all">{source.url}</span>. Looked at as a visitor would; nothing submitted.
-      </>
-    );
-  }
-  return (
-    <>
-      {source.addresses.length} {source.addresses.length === 1 ? "address" : "addresses"} on GOAT Testnet3, read from
-      the chain:{" "}
-      {source.addresses.map((address) => (
-        <span key={address} className="mr-2 inline-block">
-          <ChainLink value={address} short />
-        </span>
-      ))}
-    </>
   );
 }
 
@@ -115,15 +76,19 @@ async function ReportContent({ params }: { params: Promise<{ jobId: string }> })
     <div className="space-y-8">
       {pending ? <AutoRefresh /> : null}
       <Link
-        href="/reports"
+        href={report.watch ? `/watches/${report.watch.id}` : "/reports"}
         className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft className="size-4" aria-hidden="true" />
-        All reports
+        {report.watch ? "Back to the watch" : "All reports"}
       </Link>
 
       <PageHeader
-        eyebrow={`${capabilityLabel(report.capability)} · ${report.projectName}`}
+        eyebrow={
+          report.watch
+            ? `Reading ${report.watch.reading + 1} of ${report.watch.readingsPlanned}${report.watch.reading === 0 ? " · first look" : ""} · ${report.projectName}`
+            : `${capabilityLabel(report.capability)} · ${report.projectName}`
+        }
         title={report.offeringName}
         description={headline(report)}
         actions={
@@ -143,7 +108,15 @@ async function ReportContent({ params }: { params: Promise<{ jobId: string }> })
         }
       />
 
-      {report.status === "failed" ? (
+      {report.status === "failed" && report.watch ? (
+        <div className="rounded-xl border border-warn/30 bg-warn-dim p-5">
+          <p className="font-medium text-foreground">This reading was not taken</p>
+          <p className="mt-1 max-w-2xl text-sm leading-relaxed text-ink-soft">
+            A reading belongs to its moment, so it is not taken again later. The watch carries on with the next
+            one, and its period report will say this reading is missing.
+          </p>
+        </div>
+      ) : report.status === "failed" ? (
         <div className="rounded-xl border border-warn/30 bg-warn-dim p-5">
           <p className="font-medium text-foreground">This test was paid for and did not run</p>
           <p className="mt-1 max-w-2xl text-sm leading-relaxed text-ink-soft">
@@ -284,9 +257,17 @@ async function ReportContent({ params }: { params: Promise<{ jobId: string }> })
               View engagement
             </Link>
           </Fact>
-          <Fact label="Usage charge">
+          <Fact label={report.watch ? "Charge for the whole watch" : "Usage charge"}>
             <span className="figure">{formatUnits(report.chargeUnits, report.asset)}</span>
             {report.isSimulatedPayment ? <SimulatedBadge className="ml-2" /> : null}
+            {report.watch ? (
+              <span className="block text-xs text-muted-foreground">
+                One payment covers all {report.watch.readingsPlanned} readings over {periodLabel(report.watch.periodDays)}.{" "}
+                <Link href={`/watches/${report.watch.id}`} className="underline underline-offset-4">
+                  View the watch
+                </Link>
+              </span>
+            ) : null}
           </Fact>
           <Fact label="Payment reference">
             {report.paymentReference ? <ChainLink value={report.paymentReference} /> : "None"}

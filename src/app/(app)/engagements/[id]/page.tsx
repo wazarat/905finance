@@ -15,13 +15,13 @@ import {
 import { ChainLink } from "@/components/goat/chain-link";
 import { Button } from "@/components/ui/button";
 import {
-  BILLING_UNIT_LABELS,
   capabilityLabel,
   NETWORK_ROLES,
   SETTLEMENT_RAIL,
   getRail,
   railLabel,
 } from "@/lib/capabilities";
+import { offeringTerms } from "@/lib/watch";
 import {
   ENGAGEMENT_STATE_LABELS,
   isTerminal,
@@ -191,8 +191,7 @@ function MandateSummary({ detail }: { detail: EngagementDetail }) {
                 {offering.isActive ? "" : " (no longer offered)"}
               </span>
               <span className="figure text-xs text-muted-foreground">
-                {formatMoney(offering.priceMinor, offering.currency)}{" "}
-                {BILLING_UNIT_LABELS[offering.billingUnit]}
+                {formatMoney(offering.priceMinor, offering.currency)} {offeringTerms(offering)}
               </span>
             </li>
           ))}
@@ -301,7 +300,7 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
   const offeringOptions = activeOfferings.map((o) => ({
     id: o.id,
     name: o.name,
-    priceLabel: `${formatMoney(o.priceMinor, o.currency)} ${BILLING_UNIT_LABELS[o.billingUnit]}`,
+    priceLabel: `${formatMoney(o.priceMinor, o.currency)} ${offeringTerms(o)}`,
     detail: o.description || capabilityLabel(o.capability),
   }));
   const draftValues = {

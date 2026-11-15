@@ -250,6 +250,11 @@ export const serviceOfferings = pgTable(
     priceMinor: integer("price_minor").notNull(),
     currency: text("currency").notNull().default("USD"),
     requiresWeb3: boolean("requires_web3").notNull().default(false),
+    /**
+     * Set for work done over a period: the number of days the seller keeps
+     * reading. Null for work done once. The price then covers the whole period.
+     */
+    periodDays: integer("period_days"),
     isActive: boolean("is_active").notNull().default(true),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -257,6 +262,7 @@ export const serviceOfferings = pgTable(
   (t) => [
     index("service_offerings_seller_idx").on(t.sellerProfileId),
     check("service_offerings_price_nonnegative", sql`${t.priceMinor} >= 0`),
+    check("service_offerings_period", sql`${t.periodDays} is null or ${t.periodDays} between 1 and 30`),
     check("service_offerings_currency_format", sql`${t.currency} ~ '^[A-Z]{3,5}$'`),
   ],
 );
@@ -1171,6 +1177,60 @@ export const goatFlowOrders = pgTable("goat_flow_orders", {
 // ---------------------------------------------------------------------------
 
 /**
+ * Work a seller does over a period, for one paid purchase: the same read-only
+ * look taken on a schedule, ending in one report. Each reading is an ordinary
+ * testing job. What is read is fixed here when the watch starts, so every
+ * reading reads the same thing.
+ */
+export const watches = pgTable(
+  "watches",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sequence: bigint("sequence", { mode: "number" }).notNull().generatedAlwaysAsIdentity(),
+    /** One watch per purchase. */
+    purchaseId: uuid("purchase_id")
+      .notNull()
+      .unique()
+      .references(() => purchases.id, { onDelete: "restrict" }),
+    engagementId: uuid("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "restrict" }),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "restrict" }),
+    sellerProfileId: uuid("seller_profile_id")
+      .notNull()
+      .references(() => sellerProfiles.id, { onDelete: "restrict" }),
+    serviceOfferingId: uuid("service_offering_id")
+      .notNull()
+      .references(() => serviceOfferings.id, { onDelete: "restrict" }),
+    capability: text("capability").notNull(),
+    /** What every reading is keyed by for the workers: "github", "website" or "contracts". */
+    fixtureKey: text("fixture_key").notNull(),
+    source: jsonb("source").$type<JobSource>().notNull(),
+    periodDays: integer("period_days").notNull(),
+    everyHours: integer("every_hours").notNull(),
+    readingsPlanned: integer("readings_planned").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    /** When the last reading is due. */
+    endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+    /** watching, reported, or failed when no reading could be taken at all. */
+    status: text("status").notNull().default("watching"),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    /** The period report in one or two sentences, written when the watch finishes. */
+    summary: text("summary"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("watches_status_idx").on(t.status, t.sequence),
+    index("watches_engagement_idx").on(t.engagementId, t.sequence),
+    check("watches_status", sql`${t.status} in ('watching', 'reported', 'failed')`),
+    check("watches_plan", sql`${t.readingsPlanned} >= 2 and ${t.everyHours} > 0 and ${t.periodDays} > 0`),
+    check("watches_finished_together", sql`(${t.status} = 'watching') = (${t.finishedAt} is null)`),
+  ],
+);
+
+/**
  * A test to be executed for one paid purchase. Jobs wait in this table until
  * a testing worker claims one; a claim is a lease that expires, so a worker
  * that dies does not strand a job.
@@ -1180,11 +1240,13 @@ export const testingJobs = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     sequence: bigint("sequence", { mode: "number" }).notNull().generatedAlwaysAsIdentity(),
-    /** One job per purchase: a purchase is never executed twice. */
+    /** One job per purchase, or one per reading for a purchase of work over a period. */
     purchaseId: uuid("purchase_id")
       .notNull()
-      .unique()
       .references(() => purchases.id, { onDelete: "restrict" }),
+    /** The watch this job is a reading of, and which reading, numbered from 0. Both null for work done once. */
+    watchId: uuid("watch_id").references(() => watches.id, { onDelete: "restrict" }),
+    reading: integer("reading"),
     engagementId: uuid("engagement_id")
       .notNull()
       .references(() => engagements.id, { onDelete: "restrict" }),
@@ -1216,6 +1278,16 @@ export const testingJobs = pgTable(
   (t) => [
     index("testing_jobs_queue_idx").on(t.status, t.sequence),
     index("testing_jobs_engagement_idx").on(t.engagementId, t.sequence),
+    // A purchase of work done once is never executed twice.
+    uniqueIndex("testing_jobs_purchase_once_uq")
+      .on(t.purchaseId)
+      .where(sql`${t.watchId} is null`),
+    // Nor is any one reading of a watch.
+    uniqueIndex("testing_jobs_reading_uq")
+      .on(t.watchId, t.reading)
+      .where(sql`${t.watchId} is not null`),
+    check("testing_jobs_reading_with_watch", sql`(${t.watchId} is null) = (${t.reading} is null)`),
+    check("testing_jobs_reading_nonnegative", sql`${t.reading} is null or ${t.reading} >= 0`),
   ],
 );
 
@@ -1505,7 +1577,7 @@ export const proofRecords = pgTable(
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
     engagementId: uuid("engagement_id"),
-    /** payment, funding, return, rating or verdict. */
+    /** payment, funding, return, rating, verdict, report or period (a watch's period report). */
     kind: text("kind").notNull(),
     entityId: uuid("entity_id").notNull(),
     document: text("document").notNull(),
@@ -1517,7 +1589,7 @@ export const proofRecords = pgTable(
     unique("proof_records_entity_uq").on(t.kind, t.entityId),
     index("proof_records_org_idx").on(t.organizationId, t.sequence),
     index("proof_records_batch_idx").on(t.batchId, t.sequence),
-    check("proof_records_kind", sql`${t.kind} in ('payment', 'funding', 'return', 'rating', 'verdict', 'report')`),
+    check("proof_records_kind", sql`${t.kind} in ('payment', 'funding', 'return', 'rating', 'verdict', 'report', 'period')`),
   ],
 );
 
@@ -1557,6 +1629,7 @@ export type FundReturn = typeof fundReturns.$inferSelect;
 export type GoatFlowOrder = typeof goatFlowOrders.$inferSelect;
 export type Settlement = "simulated" | "goat_testnet3";
 export type TestingJob = typeof testingJobs.$inferSelect;
+export type Watch = typeof watches.$inferSelect;
 export type TestingResult = typeof testingResults.$inferSelect;
 export type Finding = typeof findings.$inferSelect;
 

@@ -1,8 +1,9 @@
 import "server-only";
 import { timingSafeEqual } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import { describeResult } from "@/lib/testing";
+import { periodLabel } from "@/lib/watch";
 import type { AgentToSeller, SellerReply } from "../agent/transport";
 import { isUuid } from "../authz";
 import { offeringPriceUnits } from "../budget";
@@ -21,6 +22,7 @@ const {
   paymentTransactions,
   testingJobs,
   testingResults,
+  watches,
 } = schema;
 
 /**
@@ -90,7 +92,8 @@ export async function answerAsSampleSeller(
     if (price === null) return refuse("That service cannot be priced.");
     // Decline before any payment if the test could not actually be run.
     const blocker =
-      (await fulfilmentBlocker(project, offering.capability)) ?? (await repositoryBlocker(project, offering.capability));
+      (await fulfilmentBlocker(project, offering.capability, db, offering.periodDays)) ??
+      (await repositoryBlocker(project, offering.capability, db, offering.periodDays));
     if (blocker) return refuse(blocker);
     // Where the seller asks to be paid: its simulated account, or, for an
     // engagement that settles on GOAT, the wallet its confirmed identity names.
@@ -139,7 +142,28 @@ export async function answerAsSampleSeller(
 /** How an order this seller took on is going, as the testing worker has reported it. */
 async function orderStatus(engagementId: string, purchaseId: string): Promise<SellerReply> {
   if (!isUuid(purchaseId)) return refuse("Unknown order.");
-  const [row] = await getDb()
+  const db = getDb();
+  // Work over a period is answered for as a whole: it is done when its period report is.
+  const [watch] = await db.select().from(watches).where(eq(watches.purchaseId, purchaseId));
+  if (watch) {
+    if (watch.engagementId !== engagementId) return refuse("Unknown order.");
+    const [first] = await db
+      .select({ id: testingJobs.id })
+      .from(testingJobs)
+      .where(eq(testingJobs.watchId, watch.id))
+      .orderBy(asc(testingJobs.sequence))
+      .limit(1);
+    return {
+      kind: "status",
+      purchaseId,
+      jobId: first?.id ?? "",
+      state: watch.status === "watching" ? "running" : watch.status === "reported" ? "completed" : "failed",
+      summary:
+        watch.summary ??
+        `Watching for ${periodLabel(watch.periodDays)}. The report is due after ${watch.endsAt.toISOString().slice(0, 10)}.`,
+    };
+  }
+  const [row] = await db
     .select({ job: testingJobs, result: testingResults })
     .from(testingJobs)
     .leftJoin(testingResults, eq(testingResults.jobId, testingJobs.id))

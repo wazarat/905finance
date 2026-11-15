@@ -7,7 +7,8 @@ import {
   NotConnectedBadge,
 } from "@/components/sellers/badges";
 import { ChainLink } from "@/components/goat/chain-link";
-import { BILLING_UNIT_LABELS, NETWORK_ROLES, capabilityLabel } from "@/lib/capabilities";
+import { NETWORK_ROLES, capabilityLabel } from "@/lib/capabilities";
+import { offeringTerms, periodLabel, watchPlanLabel } from "@/lib/watch";
 import { agentExplorerLink } from "@/lib/goat";
 import { formatMoney } from "@/lib/money";
 import type { PublicSellerDetail } from "@/server/marketplace";
@@ -122,8 +123,14 @@ export function SellerDetail({
                         {offering.description}
                       </p>
                     ) : null}
+                    {offering.periodDays ? (
+                      <p className="text-sm leading-relaxed text-muted-foreground">
+                        {watchPlanLabel(offering.periodDays)}
+                      </p>
+                    ) : null}
                     <p className="pt-1 text-xs text-muted-foreground">
                       {capabilityLabel(offering.capability)}
+                      {offering.periodDays ? ` · over ${periodLabel(offering.periodDays)}` : ""}
                       {offering.requiresWeb3 ? " · Web3 projects" : ""}
                     </p>
                   </div>
@@ -131,9 +138,7 @@ export function SellerDetail({
                     <p className="figure text-lg text-foreground">
                       {formatMoney(offering.priceMinor, offering.currency)}
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                      {BILLING_UNIT_LABELS[offering.billingUnit]}
-                    </p>
+                    <p className="text-xs text-muted-foreground">{offeringTerms(offering)}</p>
                   </div>
                 </li>
               ))}
@@ -142,8 +147,8 @@ export function SellerDetail({
             <p className="text-sm text-muted-foreground">No services published yet.</p>
           )}
           <p className="text-xs text-muted-foreground">
-            Prices are per billing unit. Nothing is charged until you authorize an engagement and a
-            budget.
+            Prices are per billing unit, or for the whole period where one is named. Nothing is
+            charged until you authorize an engagement and a budget.
           </p>
         </section>
       </div>

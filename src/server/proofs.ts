@@ -10,6 +10,7 @@ import { privyServerConfig, type PrivyServerConfig } from "./env";
 import { notFound } from "./errors";
 import { gasBalance, goatClient, verifyNote } from "./goat/chain";
 import { goatSigner } from "./goat/signer";
+import { loadReadings, summarizeReadings } from "./testing/watches";
 
 const {
   engagementRatings,
@@ -24,12 +25,13 @@ const {
   testingJobs,
   testingResults,
   validationCases,
+  watches,
 } = schema;
 
 /**
  * Proof on GOAT.
  *
- * Every payment, funding, return, rating and verdict is given a fingerprint:
+ * Every payment, funding, return, rating, verdict and report is given a fingerprint:
  * the keccak256 hash of a short document describing it. Fingerprints are
  * combined in batches, and each batch's combined fingerprint is written to
  * GOAT Testnet3 in a transaction from the platform's proof wallet to itself.
@@ -42,7 +44,7 @@ const {
  * freely, and a batch that fails just releases its records to the next one.
  */
 
-export const PROOF_KINDS = ["payment", "funding", "return", "rating", "verdict", "report"] as const;
+export const PROOF_KINDS = ["payment", "funding", "return", "rating", "verdict", "report", "period"] as const;
 export type ProofKind = (typeof PROOF_KINDS)[number];
 
 /** The four bytes that begin every proof transaction's data: the text "905f". */
@@ -82,6 +84,10 @@ export const proofData = (root: string): Hex => concatHex([PROOF_PREFIX, root as
 // ---------------------------------------------------------------------------
 
 const settlementOf = (isSimulated: boolean) => (isSimulated ? "test funds" : GOAT_TESTNET3.name);
+
+/** How a set of findings is fixed in a fingerprint's document: by the hash of each one's severity, title and place. */
+const findingsHash = (found: ReadonlyArray<{ severity: string; title: string; location: string }>): Hash =>
+  fingerprint(JSON.stringify(found.map((entry) => [entry.severity, entry.title, entry.location])));
 
 type Draft = { organizationId: string; engagementId: string | null; kind: ProofKind; entityId: string; document: string };
 
@@ -257,8 +263,60 @@ export async function syncProofRecords(): Promise<number> {
         outcome: result.outcome,
         tests: result.testsTotal === null ? null : { total: result.testsTotal, passed: result.testsPassed, failed: result.testsFailed },
         findings: found.length,
-        findingsHash: fingerprint(JSON.stringify(found.map((entry) => [entry.severity, entry.title, entry.location]))),
+        findingsHash: findingsHash(found),
         at: result.createdAt.toISOString(),
+      }),
+    });
+  }
+
+  const periods = await db
+    .select({ watch: watches, organizationId: engagements.organizationId })
+    .from(watches)
+    .innerJoin(engagements, eq(engagements.id, watches.engagementId))
+    .where(and(eq(watches.status, "reported"), missing("period", watches.id)))
+    .orderBy(watches.finishedAt)
+    .limit(BATCH_SIZE);
+  for (const { watch, organizationId } of periods) {
+    const readings = await loadReadings(db, watch);
+    const summary = summarizeReadings(watch, readings);
+    drafts.push({
+      organizationId,
+      engagementId: watch.engagementId,
+      kind: "period",
+      entityId: watch.id,
+      // Each reading is named with the same findings hash its own report's proof carries,
+      // so the period report can be checked against the readings it was made from.
+      document: JSON.stringify({
+        type: "905finance.period-report.v1",
+        id: watch.id,
+        engagement: watch.engagementId,
+        seller: watch.sellerProfileId,
+        work: watch.capability,
+        periodDays: watch.periodDays,
+        from: watch.startedAt.toISOString(),
+        to: watch.endsAt.toISOString(),
+        readings: readings.map((entry) => ({
+          n: entry.reading + 1,
+          due: entry.dueAt.toISOString(),
+          state: entry.state,
+          report: entry.state === "taken" ? entry.jobId : null,
+          findings: entry.state === "taken" ? entry.findings.length : null,
+          findingsHash: entry.state === "taken" ? findingsHash(entry.findings) : null,
+        })),
+        compared: summary.comparable,
+        findings: {
+          fromStartToEnd: summary.counts.throughout,
+          appeared: summary.counts.appeared,
+          resolved: summary.counts.resolved,
+          cameAndWent: summary.counts.came_and_went,
+          changed: summary.counts.changed,
+        },
+        comparisonHash: fingerprint(
+          JSON.stringify(
+            summary.tracked.map((entry) => [entry.status, entry.severity, entry.title, entry.location, entry.seenIn, entry.changes.length]),
+          ),
+        ),
+        at: watch.finishedAt?.toISOString() ?? null,
       }),
     });
   }

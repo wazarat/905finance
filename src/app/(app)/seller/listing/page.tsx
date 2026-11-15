@@ -6,7 +6,8 @@ import { PageSkeleton } from "@/components/app/page-skeleton";
 import { PageHeader, Panel } from "@/components/app/page-header";
 import { ListingStatusBadge } from "@/components/sellers/badges";
 import { Button } from "@/components/ui/button";
-import { BILLING_UNIT_LABELS, capabilityLabel } from "@/lib/capabilities";
+import { capabilityLabel } from "@/lib/capabilities";
+import { offeringTerms } from "@/lib/watch";
 import { formatMoney } from "@/lib/money";
 import { roleHasPermission } from "@/server/authz";
 import { requireWorkspace } from "@/server/page-context";
@@ -132,9 +133,7 @@ async function SellerListingContent() {
                     <p className="figure text-foreground">
                       {formatMoney(offering.priceMinor, offering.currency)}
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                      {BILLING_UNIT_LABELS[offering.billingUnit]}
-                    </p>
+                    <p className="text-xs text-muted-foreground">{offeringTerms(offering)}</p>
                   </div>
                   {canEdit ? <RemoveOfferingButton offeringId={offering.id} name={offering.name} /> : null}
                 </div>

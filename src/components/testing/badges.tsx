@@ -1,6 +1,7 @@
 import type { TestingJobStatus, TestingOutcome } from "@/db/schema";
 import { JOB_STATUS_LABELS, OUTCOME_LABELS, SEVERITIES, SEVERITY_LABELS, type Severity } from "@/lib/testing";
 import { cn } from "@/lib/utils";
+import { READING_STATE_LABELS, WATCH_STATUS_LABELS, type ReadingState, type WatchStatus } from "@/lib/watch";
 
 const pill =
   "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium whitespace-nowrap";
@@ -29,6 +30,32 @@ export function JobBadge({ status, outcome }: { status: TestingJobStatus; outcom
     return <span className={cn(pill, WARN)}>{JOB_STATUS_LABELS.failed}</span>;
   }
   return <span className={cn(pill, outcome === "passed" ? GOOD : BAD)}>{OUTCOME_LABELS[outcome]}</span>;
+}
+
+/** Where a watch stands. */
+export function WatchBadge({ status }: { status: WatchStatus }) {
+  if (status === "watching") {
+    return (
+      <span className={cn(pill, INFO)}>
+        <span className="size-1.5 animate-pulse rounded-full bg-info" aria-hidden="true" />
+        {WATCH_STATUS_LABELS.watching}
+      </span>
+    );
+  }
+  return <span className={cn(pill, status === "reported" ? GOOD : WARN)}>{WATCH_STATUS_LABELS[status]}</span>;
+}
+
+const READING_TONE: Record<ReadingState, string> = {
+  taken: GOOD,
+  unreadable: WARN,
+  missed: WARN,
+  waiting: INFO,
+  scheduled: NEUTRAL,
+};
+
+/** Whether one reading of a watch was taken. */
+export function ReadingBadge({ state }: { state: ReadingState }) {
+  return <span className={cn(pill, READING_TONE[state])}>{READING_STATE_LABELS[state]}</span>;
 }
 
 const SEVERITY_TONE: Record<Severity, string> = {

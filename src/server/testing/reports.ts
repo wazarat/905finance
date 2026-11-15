@@ -17,6 +17,7 @@ const {
   sellerProfiles,
   spendingMandates,
   paymentTransactions,
+  watches,
 } = schema;
 
 /**
@@ -54,7 +55,9 @@ export type JobLine = {
   } | null;
   findingCounts: SeverityCounts;
   findingsTotal: number;
-  /** What the buyer was charged for this job. */
+  /** Set when the job is one reading of a watch: which one, and of how many. Readings are numbered from 0. */
+  watch: { id: string; reading: number; readingsPlanned: number; periodDays: number } | null;
+  /** What the buyer was charged for this job, or for the whole watch it is a reading of. */
   chargeUnits: bigint;
   asset: AssetInfo;
   isSimulatedPayment: boolean;
@@ -73,6 +76,8 @@ const jobColumns = {
   assetDecimals: spendingMandates.assetDecimals,
   isSimulatedPayment: purchases.isSimulated,
   organizationId: engagements.organizationId,
+  readingsPlanned: watches.readingsPlanned,
+  periodDays: watches.periodDays,
 };
 
 function jobQuery() {
@@ -84,7 +89,8 @@ function jobQuery() {
     .innerJoin(projects, eq(projects.id, testingJobs.projectId))
     .innerJoin(sellerProfiles, eq(sellerProfiles.id, testingJobs.sellerProfileId))
     .leftJoin(spendingMandates, eq(spendingMandates.engagementId, testingJobs.engagementId))
-    .leftJoin(testingResults, eq(testingResults.jobId, testingJobs.id));
+    .leftJoin(testingResults, eq(testingResults.jobId, testingJobs.id))
+    .leftJoin(watches, eq(watches.id, testingJobs.watchId));
 }
 
 type JobRow = Awaited<ReturnType<typeof jobQuery>>[number];
@@ -140,6 +146,10 @@ function toJobLine(row: JobRow, counts: SeverityCounts): JobLine {
       : null,
     findingCounts: counts,
     findingsTotal,
+    watch:
+      job.watchId && job.reading !== null && row.readingsPlanned !== null && row.periodDays !== null
+        ? { id: job.watchId, reading: job.reading, readingsPlanned: row.readingsPlanned, periodDays: row.periodDays }
+        : null,
     chargeUnits: row.chargeUnits,
     asset: { code: row.assetCode, decimals: row.assetDecimals ?? 2 },
     isSimulatedPayment: row.isSimulatedPayment,

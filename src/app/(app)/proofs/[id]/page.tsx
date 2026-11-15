@@ -24,6 +24,7 @@ const KINDS: Record<string, string> = {
   rating: "Rating",
   verdict: "Verdict",
   report: "Test report",
+  period: "Period report",
 };
 
 function pretty(document: string): string {

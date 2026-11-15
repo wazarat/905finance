@@ -151,6 +151,7 @@ export async function createOffering(
         description: input.description,
         capability: input.capability,
         billingUnit: input.billingUnit,
+        periodDays: input.periodDays,
         priceMinor: input.priceMinor,
         currency: "USD",
         requiresWeb3: isWeb3Capability(input.capability),

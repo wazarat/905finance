@@ -16,12 +16,25 @@ import { getDb, schema, type DbOrTx } from "@/db/client";
 import type { JobSource, Project, TestingJob } from "@/db/schema";
 import { getCapability } from "@/lib/capabilities";
 import { CAPABILITY_TOOLS, SEVERITIES, describeResult } from "@/lib/testing";
+import { periodAdjective } from "@/lib/watch";
 import { recordAudit } from "../audit";
 import { assertAuthenticated, requirePermissionOnRecord, type Actor } from "../authz";
 import { conflict, invalid, notFound } from "../errors";
+import { advanceWatches, runningWatch, startWatch } from "./watches";
 
-const { testingJobs, testingResults, findings, testingWorkers, purchases, engagements, projects, projectFiles, serviceOfferings, agentMessages } =
-  schema;
+const {
+  testingJobs,
+  testingResults,
+  findings,
+  testingWorkers,
+  purchases,
+  engagements,
+  projects,
+  projectFiles,
+  serviceOfferings,
+  agentMessages,
+  watches,
+} = schema;
 
 /**
  * The testing-job queue.
@@ -76,13 +89,28 @@ export async function fulfilmentBlocker(
   project: TestableProject,
   capability: string,
   db: DbOrTx = getDb(),
+  /** Set when the work is a watch over this many days rather than a single look. */
+  periodDays: number | null = null,
 ): Promise<string | null> {
   const label = getCapability(capability)?.label ?? capability;
   if (project.sourceType !== "fixture" && !isRepositoryCapability(capability)) {
     return `"${label}" runs the project's code, which is offered for the bundled projects only. What you share of your own project is read, never run.`;
   }
-  const target = await targetOf(project, capability, db);
-  if (!target) return project.sourceType === "fixture" ? "This project has no bundled fixture." : NOTHING_SHARED[capability];
+  const watch = periodDays !== null;
+  if (watch && project.sourceType === "fixture") {
+    return "A watch reads what a project of your own shares, again and again. A bundled project never changes, so there is nothing to watch.";
+  }
+  const target = await targetOf(project, capability, db, { watch });
+  if (!target) {
+    if (project.sourceType === "fixture") return "This project has no bundled fixture.";
+    return watch ? NOTHING_TO_WATCH[capability] : NOTHING_SHARED[capability];
+  }
+  if (watch) {
+    const running = await runningWatch(db, project.id, capability);
+    if (running) {
+      return `This project already has this watch running, until ${running.endsAt.toISOString().slice(0, 10)}. A second one would read the same thing.`;
+    }
+  }
   const support = await workerSupport(target.key, capability, db);
   if (support === "offline") {
     return "No testing worker is online, so this test cannot be run right now.";
@@ -110,18 +138,31 @@ const NOTHING_SHARED: Record<string, string> = {
   contract_check: "This project shares no contract addresses to check. Add them to the project.",
 };
 
+/** What a buyer is told when their project shares nothing that could change over a period. */
+const NOTHING_TO_WATCH: Record<string, string> = {
+  security_scan:
+    "A watch reads a public GitHub repository again at each reading, and this project shares none. Shared files do not change, so the single scan is the one to buy for those.",
+  solidity_review:
+    "A watch reads a public GitHub repository again at each reading, and this project shares none. Shared files do not change, so the single review is the one to buy for those.",
+  website_check: NOTHING_SHARED.website_check,
+  contract_check: NOTHING_SHARED.contract_check,
+};
+
 /**
  * What a test would be run on for a project: its bundled fixture, or the
  * first thing it shares that the test type can read. Null when there is
- * nothing for that test type.
+ * nothing for that test type. A watch only reads things that can change, so
+ * files shared once are not something it can be run on.
  */
 export async function targetOf(
   project: TestableProject,
   capability: string,
   db: DbOrTx = getDb(),
+  options: { watch?: boolean } = {},
 ): Promise<JobTarget | null> {
   if (project.sourceType === "fixture") return project.fixtureKey ? { key: project.fixtureKey, source: null } : null;
   for (const kind of SHARED_CAPABILITIES[capability] ?? []) {
+    if (kind === "files" && options.watch) continue;
     if (kind === "github") {
       const repository = parseGitHubRepository(project.repositoryUrl);
       if (repository) return { key: kind, source: { kind, ...repository } };
@@ -199,8 +240,9 @@ export async function repositoryBlocker(
   project: TestableProject,
   capability: string,
   db: DbOrTx = getDb(),
+  periodDays: number | null = null,
 ): Promise<string | null> {
-  const target = await targetOf(project, capability, db);
+  const target = await targetOf(project, capability, db, { watch: periodDays !== null });
   if (target?.source?.kind !== "github") return null;
   const { exists, languages } = await probe(target.source);
   if (exists === false) {
@@ -260,7 +302,12 @@ export async function enqueueTestingJob(purchaseId: string): Promise<TestingJob>
     const [purchase] = await tx.select().from(purchases).where(eq(purchases.id, purchaseId)).for("update");
     if (!purchase) throw notFound("Purchase");
 
-    const [existing] = await tx.select().from(testingJobs).where(eq(testingJobs.purchaseId, purchase.id));
+    const [existing] = await tx
+      .select()
+      .from(testingJobs)
+      .where(eq(testingJobs.purchaseId, purchase.id))
+      .orderBy(asc(testingJobs.sequence))
+      .limit(1);
     if (existing) return existing;
 
     if (purchase.status !== "paid") throw conflict("Only a paid purchase can be tested.");
@@ -273,9 +320,25 @@ export async function enqueueTestingJob(purchaseId: string): Promise<TestingJob>
     if (!engagement.sellerProfileId || offering.sellerProfileId !== engagement.sellerProfileId) {
       throw conflict("The purchase does not belong to this engagement's seller.");
     }
-    const target = await targetOf(project, offering.capability, tx);
+    const watch = offering.periodDays !== null;
+    const target = await targetOf(project, offering.capability, tx, { watch });
     if (!target || (project.sourceType !== "fixture" && !isRepositoryCapability(offering.capability))) {
       throw conflict("This test cannot be run on this project.");
+    }
+    if (watch) {
+      // Work over a period: the first reading is queued now, and is the buyer's first look.
+      if (!target.source) throw conflict("A watch cannot be run on a bundled project.");
+      if (await runningWatch(tx, project.id, offering.capability)) {
+        throw conflict("This project already has this watch running.");
+      }
+      const started = await startWatch(tx, {
+        purchase,
+        engagement,
+        project,
+        offering,
+        target: { key: target.key, source: target.source },
+      });
+      return started.job;
     }
 
     const [job] = await tx
@@ -341,6 +404,11 @@ async function releaseJobs(tx: DbOrTx, where: ReturnType<typeof and>): Promise<v
  * run; it is then given the oldest queued job it supports, if there is one.
  */
 export async function claimTestingJob(raw: unknown): Promise<ClaimedJob | null> {
+  return (await workerCheckIn(raw)).job;
+}
+
+/** The same check-in, also saying how many watches it found had ended and wrote the period report for. */
+export async function workerCheckIn(raw: unknown): Promise<{ job: ClaimedJob | null; watchesFinished: number }> {
   const parsed = claimInput.safeParse(raw);
   if (!parsed.success || Object.keys(parsed.data.tools).length > 10) {
     throw invalid("The worker's check-in was not understood.");
@@ -348,7 +416,16 @@ export async function claimTestingJob(raw: unknown): Promise<ClaimedJob | null> 
   const { workerId, tools, supports } = parsed.data;
   const now = new Date();
 
-  return getDb().transaction(async (tx) => {
+  // A worker asking for work is what moves every watch's schedule forward:
+  // readings that have come due are queued before the queue is looked at.
+  let watchesFinished = 0;
+  try {
+    watchesFinished = (await advanceWatches({ now })).finished;
+  } catch (error) {
+    console.error("Watches could not be brought up to date", error);
+  }
+
+  const job = await getDb().transaction(async (tx): Promise<ClaimedJob | null> => {
     await tx
       .insert(testingWorkers)
       .values({ workerId, tools, supports, lastSeenAt: now })
@@ -402,6 +479,7 @@ export async function claimTestingJob(raw: unknown): Promise<ClaimedJob | null> 
       ...(files ? { files } : {}),
     };
   });
+  return { job, watchesFinished };
 }
 
 // ---------------------------------------------------------------------------
@@ -492,7 +570,13 @@ function inconsistency(report: ResultInput, capability: string): string | null {
   return null;
 }
 
-export type SubmitOutcome = { jobId: string; status: TestingJob["status"]; replayed: boolean };
+export type SubmitOutcome = {
+  jobId: string;
+  status: TestingJob["status"];
+  replayed: boolean;
+  /** Set when the job was a reading in a watch. */
+  watchId?: string;
+};
 
 /**
  * A worker hands back the report for a job it holds. The report is validated,
@@ -509,7 +593,7 @@ export async function submitTestingResult(jobId: string, raw: unknown): Promise<
   if (!envelope.success) throw invalid("The report was not in the expected form.");
   const { workerId, result } = envelope.data;
 
-  return getDb().transaction(async (tx) => {
+  const outcome = await getDb().transaction(async (tx): Promise<SubmitOutcome> => {
     const [job] = await tx.select().from(testingJobs).where(eq(testingJobs.id, jobId)).for("update");
     if (!job) throw notFound("Job");
 
@@ -572,6 +656,23 @@ export async function submitTestingResult(jobId: string, raw: unknown): Promise<
       .where(eq(testingJobs.id, job.id));
 
     const summary = describeResult(figures, result.findings);
+    if (job.watchId) {
+      // One reading of a watch. The purchase is delivered by the period report, not by any one reading.
+      const [watch] = await tx.select().from(watches).where(eq(watches.id, job.watchId));
+      const ordinal = `Reading ${(job.reading ?? 0) + 1} of ${watch.readingsPlanned}`;
+      await tx.insert(agentMessages).values({
+        engagementId: job.engagementId,
+        direction: "platform",
+        kind: status === "completed" ? "reading_taken" : "reading_not_taken",
+        body: {
+          jobId: job.id,
+          watchId: watch.id,
+          purchaseId: job.purchaseId,
+          message: `${ordinal} of the ${periodAdjective(watch.periodDays)} watch${job.reading === 0 ? ", the first look" : ""}: ${summary}`,
+        },
+      });
+      return { jobId: job.id, status, replayed: false, watchId: watch.id };
+    }
     if (status === "completed") {
       await tx
         .update(purchases)
@@ -592,6 +693,16 @@ export async function submitTestingResult(jobId: string, raw: unknown): Promise<
     });
     return { jobId: job.id, status, replayed: false };
   });
+
+  // The last reading of a watch finishes it: its period report is written straight away.
+  if (outcome.watchId && !outcome.replayed) {
+    try {
+      await advanceWatches({ watchId: outcome.watchId });
+    } catch (error) {
+      console.error("A watch could not be brought up to date", error);
+    }
+  }
+  return outcome;
 }
 
 // ---------------------------------------------------------------------------
@@ -613,6 +724,9 @@ export async function requeueTestingJob(actor: Actor | null, jobId: string): Pro
       ? await tx.select().from(engagements).where(eq(engagements.id, job.engagementId))
       : [];
     await requirePermissionOnRecord(actor, engagement, "engagement.operate", "Job", tx);
+    if (job.watchId) {
+      throw conflict("A reading in a watch is not taken again. The next one is taken when it comes due.");
+    }
     if (job.status !== "failed") {
       throw conflict("Only a test that could not run can be run again.");
     }

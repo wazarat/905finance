@@ -8,6 +8,7 @@ import { JobBadge } from "@/components/testing/badges";
 import { Button } from "@/components/ui/button";
 import type { EngagementState, PurchaseStatus } from "@/db/schema";
 import { assetLabel, formatUnits, unitsToDecimalString } from "@/lib/units";
+import { WATCH_STATUS_LABELS, periodAdjective } from "@/lib/watch";
 import { cn } from "@/lib/utils";
 import type { ApprovalSummary } from "@/server/approvals";
 import type { BudgetStatus } from "@/server/budget";
@@ -314,7 +315,13 @@ const PURCHASE_LABELS: Record<PurchaseStatus, { label: string; className: string
 };
 
 function PurchaseRow({ purchase, canOperate }: { purchase: PurchaseLine; canOperate: boolean }) {
-  const status = PURCHASE_LABELS[purchase.status];
+  const { watch } = purchase;
+  const status =
+    watch && purchase.status === "delivered"
+      ? { label: "Paid · period report ready", className: "text-brand" }
+      : watch && purchase.status === "paid" && watch.status === "watching"
+        ? { label: "Paid · watching", className: "text-brand" }
+        : PURCHASE_LABELS[purchase.status];
   return (
     <li className="space-y-1.5 py-4">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
@@ -332,7 +339,31 @@ function PurchaseRow({ purchase, canOperate }: { purchase: PurchaseLine; canOper
         ) : null}
       </div>
       {purchase.message ? <p className="text-sm text-muted-foreground">{purchase.message}</p> : null}
-      {purchase.job ? (
+      {watch ? (
+        <div className="space-y-1.5 pt-0.5">
+          <p className="text-sm text-ink-soft">
+            {watch.summary ??
+              `A ${periodAdjective(watch.periodDays)} watch of ${watch.readingsPlanned} readings. Its report is due after ${dateTimeFormat.format(watch.endsAt)}.`}
+          </p>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
+            <span className="text-xs text-muted-foreground">{WATCH_STATUS_LABELS[watch.status]}</span>
+            <Link
+              href={`/watches/${watch.id}`}
+              className="text-foreground underline underline-offset-4 hover:text-brand"
+            >
+              {watch.status === "reported" ? "View period report" : "View watch"}
+            </Link>
+            {purchase.job ? (
+              <Link
+                href={`/reports/${purchase.job.id}`}
+                className="text-foreground underline underline-offset-4 hover:text-brand"
+              >
+                {purchase.job.outcome ? "View first look" : "First look in progress"}
+              </Link>
+            ) : null}
+          </div>
+        </div>
+      ) : purchase.job ? (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-0.5">
           <JobBadge status={purchase.job.status} outcome={purchase.job.outcome} />
           <span className="text-sm text-ink-soft">
@@ -402,6 +433,10 @@ const MESSAGE_KINDS: Record<string, string> = {
   delivery: "delivered",
   test_completed: "Test completed",
   test_not_run: "Test could not be run",
+  reading_taken: "Reading taken",
+  reading_not_taken: "Reading could not be taken",
+  watch_reported: "Period report ready",
+  watch_not_taken: "Watch ended with no readings",
   refusal: "refused",
   payment_confirmed: "Payment confirmed",
   payment_failed: "Payment failed",

@@ -8,9 +8,9 @@ config({ path: ".env.local", quiet: true });
 config({ path: ".env", quiet: true });
 
 /**
- * Seeds the two seller listings that 905 Finance operates itself, so the
+ * Seeds the seller listings that 905 Finance operates itself, so the
  * marketplace has working agents before any other provider has onboarded.
- * Both are flagged `isSample`, which is what routes their agent's side of a
+ * All are flagged `isSample`, which is what routes their agent's side of a
  * conversation to the platform. Endpoints use the reserved `.invalid` TLD, so
  * nothing is reachable at them.
  *
@@ -33,8 +33,29 @@ type SampleSeller = {
     billingUnit: schema.BillingUnit;
     priceMinor: number;
     requiresWeb3: boolean;
+    /** Days of work over a period. Left out for work done once. */
+    periodDays?: number;
   }>;
 };
+
+/** The same watch sold over each period, priced by its length. */
+function watchOfferings(
+  name: string,
+  description: string,
+  capability: string,
+  requiresWeb3: boolean,
+  prices: Record<number, number>,
+): SampleSeller["offerings"] {
+  return Object.entries(prices).map(([days, priceMinor]) => ({
+    name: `${name}, ${days === "1" ? "1 day" : `${days} days`}`,
+    description,
+    capability,
+    billingUnit: "per_run",
+    priceMinor,
+    requiresWeb3,
+    periodDays: Number(days),
+  }));
+}
 
 const SAMPLE_SELLERS: SampleSeller[] = [
   {
@@ -208,6 +229,69 @@ const SAMPLE_SELLERS: SampleSeller[] = [
       },
     ],
   },
+  {
+    slug: "vigil-web",
+    organizationName: "Vigil Web",
+    displayName: "Vigil Web",
+    tagline: "Watches a website's security settings for 1, 5 or 10 days and reports what changed.",
+    description:
+      "Vigil Web is a website agent operated by 905 Finance that works over a period. It takes a first look at your site straight away, then looks again on a schedule, and at the end sends one report: which weaknesses were there from start to end, which appeared, which were fixed, and where what the site sent changed.\n\nEvery reading is passive: a handful of ordinary page requests, nothing submitted, nothing probed. A reading that could not be taken is reported as missing. Nothing is filled in for it.",
+    capabilities: ["website_check"],
+    intendedRails: ["goat"],
+    endpoint: { url: "https://vigil-web.sample.invalid/agent", protocol: "https_json" },
+    offerings: watchOfferings(
+      "Website watch",
+      "The website first look, taken again on a schedule, with one report at the end comparing every reading.",
+      "website_check",
+      false,
+      { 1: 800, 5: 2000, 10: 3200 },
+    ),
+  },
+  {
+    slug: "longview",
+    organizationName: "Longview",
+    displayName: "Longview",
+    tagline: "Watches deployed contracts on GOAT Testnet3 for 1, 5 or 10 days: upgrades, owners, published source.",
+    description:
+      "Longview is a Web3 agent operated by 905 Finance that works over a period. It reads your contract addresses on GOAT Testnet3 straight away, then again on a schedule, and at the end sends one report. If a contract's logic was replaced, its owner changed, or its source was published or withdrawn while it watched, the report shows what was read before and after.\n\nIt only reads. Nothing is sent to any address, and a reading that could not be taken is reported as missing.",
+    capabilities: ["contract_check"],
+    intendedRails: ["goat"],
+    endpoint: { url: "https://longview.sample.invalid/agent", protocol: "https_json" },
+    offerings: watchOfferings(
+      "Contract watch",
+      "The contract first look, taken again on a schedule, with one report at the end showing anything that changed on the chain.",
+      "contract_check",
+      true,
+      { 1: 1000, 5: 2500, 10: 4000 },
+    ),
+  },
+  {
+    slug: "driftline",
+    organizationName: "Driftline",
+    displayName: "Driftline",
+    tagline: "Reads a public repository again each day and reports the weaknesses that arrive and the ones that get fixed.",
+    description:
+      "Driftline is a code agent operated by 905 Finance that works over a period. It reads your public GitHub repository straight away, then again on a schedule as the code changes, and at the end sends one report: weaknesses that were there throughout, ones a commit introduced, and ones a commit fixed.\n\nThe repository is read, never installed, built or run. Shared files do not change, so a watch needs a repository. A reading that could not be taken is reported as missing.",
+    capabilities: ["security_scan", "solidity_review"],
+    intendedRails: ["goat"],
+    endpoint: { url: "https://driftline.sample.invalid/agent", protocol: "https_json" },
+    offerings: [
+      ...watchOfferings(
+        "Repository security watch",
+        "The security scan of your JavaScript and TypeScript, taken again on a schedule, with one report at the end.",
+        "security_scan",
+        false,
+        { 1: 1500, 5: 3600, 10: 6000 },
+      ),
+      ...watchOfferings(
+        "Solidity watch",
+        "The Solidity pattern review of your repository, taken again on a schedule, with one report at the end.",
+        "solidity_review",
+        true,
+        { 5: 2800, 10: 4500 },
+      ),
+    ],
+  },
 ];
 
 async function main() {
@@ -325,7 +409,7 @@ async function main() {
           if (match) {
             await tx
               .update(schema.serviceOfferings)
-              .set({ ...offering, isActive: true })
+              .set({ ...offering, periodDays: offering.periodDays ?? null, isActive: true })
               .where(eq(schema.serviceOfferings.id, match.id));
           } else {
             await tx

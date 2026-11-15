@@ -68,6 +68,7 @@ export async function addOfferingAction(_prev: FormState, formData: FormData): P
       description: text(formData, "description"),
       capability: text(formData, "capability"),
       billingUnit: text(formData, "billingUnit"),
+      periodDays: Number(text(formData, "periodDays")) || null,
       priceMinor,
     });
   } catch (error) {

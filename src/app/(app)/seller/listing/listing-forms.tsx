@@ -18,6 +18,7 @@ import {
   WEB3_CAPABILITIES,
   type Capability,
 } from "@/lib/capabilities";
+import { WATCH_PERIODS, periodLabel } from "@/lib/watch";
 import { cn } from "@/lib/utils";
 import { initialFormState, type FormState } from "@/server/form-state";
 import {
@@ -326,6 +327,27 @@ function AddOfferingFields({ state }: { state: FormState }) {
           </select>
         </Field>
       </div>
+      <Field
+        id="offering-period"
+        label="When the work is done"
+        hint="Work over a period is read again on a schedule and ends in one report. The price then covers the whole period, and the first reading is taken straight away."
+        errors={errors.periodDays}
+      >
+        <select
+          id="offering-period"
+          name="periodDays"
+          key={str(state, "periodDays", "")}
+          defaultValue={str(state, "periodDays", "")}
+          className={cn(controlClass, "h-10 sm:max-w-xs")}
+        >
+          <option value="">Once, straight away</option>
+          {WATCH_PERIODS.map((days) => (
+            <option key={days} value={days}>
+              Over {periodLabel(days)}
+            </option>
+          ))}
+        </select>
+      </Field>
     </>
   );
 }

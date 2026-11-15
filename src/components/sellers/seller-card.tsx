@@ -44,8 +44,12 @@ export function SellerCard({ seller }: { seller: PublicSeller }) {
               : "—"}
           </p>
         </div>
-        <div className="flex flex-col items-end gap-1.5">
-        </div>
+        {seller.periods.length > 0 ? (
+          <p className="text-right text-xs leading-relaxed text-muted-foreground">
+            Works over a period
+            <span className="block text-foreground">{seller.periods.join(", ")} days</span>
+          </p>
+        ) : null}
       </div>
     </Link>
   );

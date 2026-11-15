@@ -27,6 +27,8 @@ export type PublicOffering = {
   priceMinor: number;
   currency: string;
   requiresWeb3: boolean;
+  /** Days the seller keeps working, for work over a period. Null for work done once. */
+  periodDays: number | null;
 };
 
 export type PublicSeller = {
@@ -42,6 +44,8 @@ export type PublicSeller = {
   startingPriceMinor: number | null;
   startingPriceCurrency: string | null;
   offeringCount: number;
+  /** The periods this seller works over, in days, shortest first. Empty when all its work is done at once. */
+  periods: number[];
 };
 
 export type PublicSellerDetail = PublicSeller & {
@@ -78,6 +82,7 @@ const publicOfferingColumns = {
   priceMinor: serviceOfferings.priceMinor,
   currency: serviceOfferings.currency,
   requiresWeb3: serviceOfferings.requiresWeb3,
+  periodDays: serviceOfferings.periodDays,
 };
 
 type SellerRow = {
@@ -103,6 +108,7 @@ function toPublicOffering(row: OfferingRow): PublicOffering {
     priceMinor: row.priceMinor,
     currency: row.currency,
     requiresWeb3: row.requiresWeb3,
+    periodDays: row.periodDays,
   };
 }
 
@@ -123,6 +129,7 @@ function toPublicSeller(row: SellerRow, offerings: OfferingRow[]): PublicSeller 
     startingPriceMinor: cheapest?.priceMinor ?? null,
     startingPriceCurrency: cheapest?.currency ?? null,
     offeringCount: offerings.length,
+    periods: [...new Set(offerings.flatMap((o) => (o.periodDays ? [o.periodDays] : [])))].sort((a, b) => a - b),
   };
 }
 

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { capabilityLabel } from "@/lib/capabilities";
 import { formatDuration } from "@/lib/testing";
 import { formatUnits } from "@/lib/units";
+import { periodAdjective } from "@/lib/watch";
 import { requireWorkspace } from "@/server/page-context";
 import { getWorkerStatus } from "@/server/testing/jobs";
 import { getTestingOverview, listTestingJobs } from "@/server/testing/reports";
@@ -90,6 +91,14 @@ async function ReportsContent() {
                     {job.offeringName}
                     <span className="font-normal text-muted-foreground"> · {job.projectName}</span>
                   </Link>
+                  {job.watch ? (
+                    <Link
+                      href={`/watches/${job.watch.id}`}
+                      className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                    >
+                      Reading {job.watch.reading + 1} of {job.watch.readingsPlanned}
+                    </Link>
+                  ) : null}
                   <JobBadge status={job.status} outcome={job.result?.outcome} />
                 </div>
                 <p className="text-sm text-ink-soft">
@@ -106,7 +115,11 @@ async function ReportsContent() {
                   <span>{job.sellerName}</span>
                   <span>{dateTimeFormat.format(job.createdAt)}</span>
                   {job.result ? <span>{formatDuration(job.result.durationMs)}</span> : null}
-                  <span className="figure">{formatUnits(job.chargeUnits, job.asset)}</span>
+                  {job.watch ? (
+                    <span>Part of a {periodAdjective(job.watch.periodDays)} watch</span>
+                  ) : (
+                    <span className="figure">{formatUnits(job.chargeUnits, job.asset)}</span>
+                  )}
                   {job.result ? <SeverityTally counts={job.findingCounts} /> : null}
                 </div>
               </li>

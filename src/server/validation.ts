@@ -198,6 +198,11 @@ export const offeringInput = z.object({
     .int("Enter a price such as 25 or 25.50.")
     .min(0)
     .max(100_000_000),
+  /** Days of work over a period, or null for work done once. */
+  periodDays: z
+    .union([z.literal(1), z.literal(5), z.literal(10)], { error: "Choose once, or a period of 1, 5 or 10 days." })
+    .nullable()
+    .default(null),
 });
 export type OfferingInput = z.infer<typeof offeringInput>;
 

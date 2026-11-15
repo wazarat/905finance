@@ -1,5 +1,5 @@
 import "server-only";
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, or } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import type {
   AgentRun,
@@ -10,6 +10,7 @@ import type {
 } from "@/db/schema";
 import { describeResult } from "@/lib/testing";
 import type { AssetInfo } from "@/lib/units";
+import type { WatchStatus } from "@/lib/watch";
 import { resolveSellerTransport } from "./agent/transport";
 import { toApprovalSummary, type ApprovalSummary } from "./approvals";
 import { assertAuthenticated, isUuid, requirePermissionOnRecord, roleHasPermission, type Actor } from "./authz";
@@ -30,6 +31,7 @@ const {
   agentRuns,
   testingJobs,
   testingResults,
+  watches,
 } = schema;
 
 export type PurchaseLine = {
@@ -48,6 +50,16 @@ export type PurchaseLine = {
     status: TestingJobStatus;
     outcome: TestingOutcome | null;
     /** What the tool reported, or why the test did not run. Null while it is waiting. */
+    summary: string | null;
+  } | null;
+  /** Set when the purchase is work over a period: `job` is then its first reading. */
+  watch: {
+    id: string;
+    status: WatchStatus;
+    periodDays: number;
+    readingsPlanned: number;
+    endsAt: Date;
+    /** The period report in a sentence, once the watch has finished. */
     summary: string | null;
   } | null;
   isSimulated: boolean;
@@ -111,11 +123,17 @@ export async function getEngagementActivity(
       providerRef: paymentTransactions.providerRef,
       job: testingJobs,
       result: testingResults,
+      watch: watches,
     })
     .from(purchases)
     .leftJoin(paymentTransactions, eq(paymentTransactions.purchaseId, purchases.id))
-    .leftJoin(testingJobs, eq(testingJobs.purchaseId, purchases.id))
+    // Work over a period has a job per reading; the purchase is shown once, with its first.
+    .leftJoin(
+      testingJobs,
+      and(eq(testingJobs.purchaseId, purchases.id), or(isNull(testingJobs.watchId), eq(testingJobs.reading, 0))),
+    )
     .leftJoin(testingResults, eq(testingResults.jobId, testingJobs.id))
+    .leftJoin(watches, eq(watches.purchaseId, purchases.id))
     .where(eq(purchases.engagementId, engagement.id))
     .orderBy(desc(purchases.sequence))
     .limit(100);
@@ -191,7 +209,7 @@ export async function getEngagementActivity(
       services.push({
         id: offering.id,
         name: offering.name,
-        blocker: await fulfilmentBlocker(project, offering.capability, db),
+        blocker: await fulfilmentBlocker(project, offering.capability, db, offering.periodDays),
       });
     }
     testing = { workerOnline: (await getWorkerStatus()).online, services };
@@ -200,7 +218,7 @@ export async function getEngagementActivity(
   return {
     budget,
     testing,
-    purchases: purchaseRows.map(({ purchase, providerRef, job, result }) => ({
+    purchases: purchaseRows.map(({ purchase, providerRef, job, result, watch }) => ({
       id: purchase.id,
       offeringName: purchase.offeringName,
       quantity: purchase.quantity,
@@ -222,11 +240,26 @@ export async function getEngagementActivity(
             summary:
               result && (result.testsTotal !== null || result.outcome === "error")
                 ? describeResult(result, [])
-                : typeof purchase.delivery?.summary === "string"
+                : watch
+                  ? // The delivery summary of a watch is its period report, not this first reading.
+                    job.status === "failed"
+                    ? (job.failureReason ?? "The reading did not complete.")
+                    : null
+                  : typeof purchase.delivery?.summary === "string"
                   ? purchase.delivery.summary
                   : job.status === "failed"
                     ? (job.failureReason ?? "The test did not complete.")
                     : null,
+          }
+        : null,
+      watch: watch
+        ? {
+            id: watch.id,
+            status: watch.status as WatchStatus,
+            periodDays: watch.periodDays,
+            readingsPlanned: watch.readingsPlanned,
+            endsAt: watch.endsAt,
+            summary: watch.summary,
           }
         : null,
       isSimulated: purchase.isSimulated,

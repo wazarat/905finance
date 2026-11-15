@@ -24,6 +24,7 @@ The product was built in seven milestones, one at a time. All seven are built. W
 | 10 | Proof on GOAT for every record | **Live** on GOAT Testnet3 |
 | 11 | Sharing your own code | **Complete**: a public GitHub repository can buy the security scan |
 | 12 | More ways to share, and a first look at each | **Complete**: a website, a few source files or contract addresses, each with its own first-look report |
+| 13 | Work over a period | **Complete**: a seller watches for 1, 5 or 10 days, with a first look straight away and one report at the end |
 
 ### What works today (Milestone 1)
 
@@ -173,6 +174,26 @@ To switch it on, set `GOAT_PROOFS=testnet3` (the Privy credentials must be set t
 - **A proof for every report.** Each report gets its own fingerprint, covering the outcome and a hash of its findings, written to GOAT with the other records as soon as the worker hands it in. The fingerprint does not contain the shared code.
 - **Two more sellers.** Harbor Web and Chainsight join Relay QA and Ledgerproof. Each serves its own ERC-8004 registration document, is rated and validated like the others, and is paid through the same purchasing path. Linking one to an agent id on GOAT is the same operator step as before (`pnpm seller:identity`).
 
+### What works today (Milestone 13)
+
+- **Work over a period.** A seller can sell a watch: the same read-only look, taken again and again over 1, 5 or 10 days, ending in one report. It is paid for once, up front, through the same purchasing path as everything else.
+
+  | Watch | Reads, at every reading | Sold by | Periods |
+  |---|---|---|---|
+  | Website watch | The website first look | Vigil Web | 1, 5, 10 days |
+  | Contract watch | The contract first look, on GOAT Testnet3 | Longview | 1, 5, 10 days |
+  | Repository security watch | The security scan of a public GitHub repository | Driftline | 1, 5, 10 days |
+  | Solidity watch | The Solidity pattern review of a public GitHub repository | Driftline | 5, 10 days |
+
+- **A first look straight away.** The first reading is queued the moment the seller takes the order. It is a full report of its own, with its own proof, and the buyer has it in seconds.
+- **A schedule.** A one-day watch reads every six hours (five readings); a longer one reads once a day (six readings over 5 days, eleven over 10). Every reading reads the same thing: what is watched is fixed when the watch starts.
+- **One report at the end.** The period report compares the readings and sorts every finding into: there from start to end, appeared, resolved, or came and went. Where a finding quotes what was read, such as a header's value or the address a proxy points at, a different quote is shown as a change, with both readings of it. A finding is the same finding when only its line number moved or a count ticked down.
+- **Nothing is filled in.** A reading no worker took before the next came due is recorded as missed, and is not taken late. A reading the tool could not finish (a site that did not answer) is recorded as that. The report compares only readings that were taken and says how many were not. A watch in which not one reading could be taken delivers nothing and says so.
+- **A proof for the period report.** It gets its own fingerprint on GOAT. Its document lists every reading with the same findings hash that reading's own proof carries, so the report can be checked against the readings it was made from.
+- **No timer of its own.** The schedule moves forward whenever a testing worker checks in, a reading is handed in, or someone opens the watch. With no worker online no reading could be taken anyway.
+- **Declined before payment where it makes no sense.** A bundled project and files shared once never change, so there is nothing to watch; a second watch of the same thing while one is running would read the same thing. In each case the seller declines and nothing is charged.
+- **Three more sellers.** Vigil Web, Longview and Driftline work over a period. A seller of its own can list work over a period too: the offering form asks when the work is done.
+
 ### What is not live yet
 
 Everything below is built and tested; none of it has been run against the real service. Each needs something only the operator can do.
@@ -182,7 +203,7 @@ Everything below is built and tested; none of it has been run against the real s
 | Buying a test on the deployed site | Works only while a testing worker is running for it; otherwise sellers decline to quote and no payment is taken. | `WORKER_TOKEN` set on the site, and `pnpm worker:live up` (see [Serving a deployed site](#serving-a-deployed-site)) or the worker image hosted elsewhere |
 | Agent messages over Qatom | Tested against a stand-in built from Qatom's published behaviour | A free catalog item per seller in the Qatom dashboard, `QATOM_FULFILMENT_TOKEN` and `QATOM_SELLER_ITEMS`, and the owner signing in at Qatom from Settings |
 | Real wallets, payments and fund returns on GOAT Testnet3 | Tested against stand-ins for Privy, GOAT Flow and the chain | `PRIVY_APP_SECRET`, an approved GOAT Flow test merchant with a fee balance whose receiving address is the seller's registry wallet, test tokens, and a little test BTC for network fees |
-| A seller other than the platform's own answering an agent | Only the platform's four sellers have a seller-side agent | A third-party seller endpoint that speaks the signed message format |
+| A seller other than the platform's own answering an agent | Only the platform's seven sellers have a seller-side agent | A third-party seller endpoint that speaks the signed message format |
 
 Other limits, by design for now:
 
@@ -191,11 +212,13 @@ Other limits, by design for now:
 - The Solidity pattern review recognises risky constructs by their shape, without compiling. It is a first look, not an audit: it does not follow value through a contract, and misses, for example, a reentrancy through `call{value: ...}` that Slither finds in the bundled vault.
 - The website first look reads one page and what that page is served with. It does not sign in, crawl or test for injection.
 - Contract addresses are read on GOAT Testnet3 only.
-- A first look is delivered at once. Work that runs over a period and reports back at the end is not built yet.
+- A watch needs a testing worker online at each reading. Readings that come due while none is online are missed, and are reported as missed.
+- A watch is paid for in full up front and is not refunded for readings that were missed. It carries on if its engagement ends first.
+- A watch repeats one of the read-only looks. It does not run a project's tests on a schedule, and it reads a repository at its default branch only.
 - A test that could not run can be re-run free of charge; it is not refunded. A payment to a seller is never reversed by the platform.
 - Listing activation is a command-line step. There is no operator console.
 - GOAT is Testnet3 only. The application refuses any other chain and the production payment API. Assets there have no monetary value.
-- The four seeded sellers, Relay QA, Ledgerproof, Harbor Web and Chainsight, are operated by 905 Finance itself. Their agents are answered by the platform, and the tests they sell are executed by the platform's testing worker.
+- The seven seeded sellers (Relay QA, Ledgerproof, Harbor Web, Chainsight, Vigil Web, Longview and Driftline) are operated by 905 Finance itself. Their agents are answered by the platform, and the tests they sell are executed by the platform's testing worker.
 
 ## Stack
 
@@ -611,5 +634,6 @@ The GOAT suite runs against stand-ins for the chain, Privy and GOAT Flow. The ER
 
 - Shared repositories: a repository's code never being run, with such tests declined before payment; the scan quoted only when GitHub confirms the repository is public and has code to read; a job carrying an owner and a name and no address; names that are not GitHub's refused by the application and again by the worker; links and special files stripped from what is unpacked; and a real scan of a stand-in repository reporting only the project's own code.
 - More ways to share: a project needing at least one of a repository, a website, files or addresses; file names, types and sizes being checked, and addresses stored once in their checked form; each first look sold only for what it reads and declined before payment otherwise; a worker being handed only the files its tool reads; the website check refusing private, local and numeric addresses on the first request and on every redirect, and never recording a cookie's value; the contract check against a stand-in chain for an account, an unpublished contract, an upgradeable one and published source; a project's own Solhint settings and disable comments being ignored; and every report getting a fingerprint fixed to its findings.
+- Work over a period: a watch's schedule and which reading is due when; a finding staying the same finding when only its line number or a count moved; findings sorted into stayed, appeared, resolved and came and went; a change in what was read being shown with both readings; a watch sold once, paid once and delivered only by its period report; a reading queued when it comes due and never twice; readings nobody took recorded as missed and never taken late; a watch that ends without its last reading still reporting what it has; a watch with no readings delivering and proving nothing; a watch declined before payment for a bundled project, for files shared once and while the same watch is running; the period report's fingerprint naming every reading with that reading's own findings hash; and a watch being visible to the organization that bought it and nobody else.
 
 The testing suite also **executes the real tools** against the bundled fixtures, through the same worker code and submission path the application uses, and asserts the figures they report (for example, Vitest: 6 tests, 5 passed, 1 failed). The Vitest cases always run; the Foundry and Slither cases run when those tools are on `PATH` and are skipped otherwise.
