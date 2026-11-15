@@ -1,9 +1,12 @@
+import { SellerFeedbackList } from "@/components/reputation/seller-feedback";
+import { listSellerFeedback } from "@/server/reputation";
+import { RespondForm } from "./feedback-forms";
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import Link from "next/link";
 import { PageSkeleton } from "@/components/app/page-skeleton";
 import { EmptyState, NotYetActive, PageHeader, Panel, StatTile } from "@/components/app/page-header";
-import { ListingStatusBadge, NotConnectedBadge } from "@/components/sellers/badges";
+import { ListingStatusBadge } from "@/components/sellers/badges";
 import { Button } from "@/components/ui/button";
 import { requireWorkspace } from "@/server/page-context";
 import { formatUnits } from "@/lib/units";
@@ -37,6 +40,7 @@ async function SellerDashboardContent() {
   const { profile, offerings } = listing;
   const gaps = listingGaps(listing);
   const earnings = await getSellerEarnings(actor, workspace.organization.id);
+  const feedback = await listSellerFeedback(actor, workspace.organization.id);
 
   return (
     <div className="space-y-10">
@@ -107,27 +111,12 @@ async function SellerDashboardContent() {
       </section>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Panel title="Agent identity" action={<NotYetActive />}>
-          <dl className="-my-3 divide-y divide-border text-sm">
-            <div className="flex items-center justify-between gap-4 py-3">
-              <dt className="text-muted-foreground">ERC-8004 registration</dt>
-              <dd>
-                <NotConnectedBadge label="Not registered" />
-              </dd>
-            </div>
-            <div className="flex items-center justify-between gap-4 py-3">
-              <dt className="text-muted-foreground">Receiving wallet</dt>
-              <dd>
-                <NotConnectedBadge />
-              </dd>
-            </div>
-            <div className="flex items-center justify-between gap-4 py-3">
-              <dt className="text-muted-foreground">Qatom catalog</dt>
-              <dd>
-                <NotConnectedBadge label="Not published" />
-              </dd>
-            </div>
-          </dl>
+        <Panel title="Reputation" description="What buyers have said about your work, and what 905 Finance decided.">
+          {feedback ? (
+            <SellerFeedbackList feedback={feedback} respond={(caseId) => <RespondForm caseId={caseId} />} />
+          ) : (
+            <p className="text-sm text-muted-foreground">Ratings appear here once buyers have engaged your agent.</p>
+          )}
         </Panel>
         <Panel title="Payment activity" description="Payments from authorized buyer agents.">
           {earnings && earnings.recent.length > 0 ? (

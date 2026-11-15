@@ -23,6 +23,7 @@ import {
 } from "@/server/form-state";
 import { checkFundReturn, completeEngagement, returnUnusedFunds } from "@/server/closure";
 import { requireActionWorkspace } from "@/server/page-context";
+import { checkRatingOnChain, rateEngagement, reportProblem } from "@/server/reputation";
 
 // Engagement ids arrive from the form, but every data-layer call checks that
 // the signed-in user belongs to the engagement's organization and holds the
@@ -257,4 +258,51 @@ export async function checkFundReturnAction(_prev: FormState, formData: FormData
   return status === "executed"
     ? { ok: true, message: "The return is confirmed." }
     : { ok: true, message: "Not confirmed yet. Nothing was sent again." };
+}
+
+/** Rate the seller for an engagement, once. */
+export async function rateEngagementAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  let reviewed: boolean;
+  try {
+    const { actor } = await requireActionWorkspace();
+    const saved = await rateEngagement(actor, text(formData, "engagementId"), {
+      stars: text(formData, "stars"),
+      comment: text(formData, "comment"),
+    });
+    reviewed = Boolean(saved.caseOpened);
+  } catch (error) {
+    return failureState(error, formValues(formData));
+  }
+  refresh();
+  return {
+    ok: true,
+    message: reviewed ? "Rating saved, and sent to 905 Finance for review." : "Rating saved.",
+  };
+}
+
+/** Put a problem with an engagement to 905 Finance. */
+export async function reportProblemAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  try {
+    const { actor } = await requireActionWorkspace();
+    await reportProblem(actor, text(formData, "engagementId"), { reason: text(formData, "reason") });
+  } catch (error) {
+    return failureState(error, formValues(formData));
+  }
+  refresh();
+  return { ok: true, message: "Sent to 905 Finance for review." };
+}
+
+/** Look again at a rating that was sent to the registry and not yet confirmed. Sends nothing. */
+export async function checkRatingAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  let status: string | null;
+  try {
+    const { actor } = await requireActionWorkspace();
+    status = (await checkRatingOnChain(actor, text(formData, "engagementId")))?.chainStatus ?? null;
+  } catch (error) {
+    return failureState(error);
+  }
+  refresh();
+  return status === "confirmed"
+    ? { ok: true, message: "Confirmed in the Reputation Registry." }
+    : { ok: false, message: "Not confirmed yet." };
 }

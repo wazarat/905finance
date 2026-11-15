@@ -1,3 +1,5 @@
+import { ReputationSummary } from "@/components/reputation/seller-feedback";
+import type { SellerReputation } from "@/server/reputation";
 import type { ReactNode } from "react";
 import {
   CapabilityChip,
@@ -35,10 +37,12 @@ export function SellerDetail({
   seller,
   action,
   showStatus = false,
+  reputation,
 }: {
   seller: PublicSellerDetail;
   action?: ReactNode;
   showStatus?: boolean;
+  reputation?: SellerReputation | null;
 }) {
   return (
     <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
@@ -69,6 +73,21 @@ export function SellerDetail({
             <p className="text-sm text-muted-foreground">No description yet.</p>
           )}
         </section>
+
+        {reputation ? (
+          <section aria-labelledby="reputation-heading" className="space-y-3">
+            <h2 id="reputation-heading" className="text-lg font-semibold text-foreground">
+              Reputation
+            </h2>
+            <div className="rounded-xl border border-border bg-card p-5">
+              <ReputationSummary reputation={reputation} />
+            </div>
+            <p className="px-1 text-xs leading-relaxed text-muted-foreground">
+              Rated one to five stars by buyers, once per engagement. A rating of one or two stars, or a reported
+              problem, is reviewed by 905 Finance.
+            </p>
+          </section>
+        ) : null}
 
         <section aria-labelledby="capabilities-heading" className="space-y-3">
           <h2 id="capabilities-heading" className="eyebrow">

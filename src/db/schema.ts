@@ -316,6 +316,31 @@ export const sellerIdentities = pgTable(
   (t) => [unique("seller_identities_agent_uq").on(t.agentRegistry, t.agentId)],
 );
 
+/**
+ * A buying organization's link to the ERC-8004 identity of its buying agent.
+ * Read from the registry exactly like a seller's: nothing here is typed in by
+ * the organization except the agent id.
+ */
+export const buyerIdentities = pgTable(
+  "buyer_identities",
+  {
+    buyerProfileId: uuid("buyer_profile_id")
+      .primaryKey()
+      .references(() => buyerProfiles.id, { onDelete: "cascade" }),
+    agentRegistry: text("agent_registry").notNull(),
+    agentId: text("agent_id").notNull(),
+    ownerAddress: text("owner_address").notNull(),
+    agentUri: text("agent_uri").notNull().default(""),
+    registration: jsonb("registration").$type<Record<string, unknown>>(),
+    registrationProblem: text("registration_problem"),
+    confirmed: boolean("confirmed").notNull().default(false),
+    linkedBy: uuid("linked_by").references(() => users.id, { onDelete: "set null" }),
+    linkedAt: timestamp("linked_at", { withTimezone: true }).notNull().defaultNow(),
+    refreshedAt: timestamp("refreshed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("buyer_identities_agent_uq").on(t.agentRegistry, t.agentId)],
+);
+
 // ---------------------------------------------------------------------------
 // Projects
 // ---------------------------------------------------------------------------
@@ -1276,6 +1301,115 @@ export const auditEvents = pgTable(
 // Row types
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Reputation and validation
+// ---------------------------------------------------------------------------
+
+/**
+ * A buyer's rating of the seller for one engagement, from one to five stars.
+ * One per engagement, and never edited: a rating is a statement made at a
+ * point in time.
+ */
+export const engagementRatings = pgTable(
+  "engagement_ratings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    engagementId: uuid("engagement_id")
+      .notNull()
+      .unique()
+      .references(() => engagements.id, { onDelete: "cascade" }),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    sellerProfileId: uuid("seller_profile_id")
+      .notNull()
+      .references(() => sellerProfiles.id, { onDelete: "cascade" }),
+    stars: integer("stars").notNull(),
+    comment: text("comment").notNull().default(""),
+    ratedBy: uuid("rated_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    /** The ERC-8004 ids of the two agents, when each had a confirmed identity at the time. */
+    buyerAgentId: text("buyer_agent_id"),
+    sellerAgentId: text("seller_agent_id"),
+    /** The hash of the public feedback document, as written to the registry. */
+    feedbackHash: text("feedback_hash").notNull(),
+    /**
+     * platform: kept by 905 Finance only. sending, sent, confirmed, failed,
+     * uncertain: the progress of writing it to the Reputation Registry.
+     */
+    chainStatus: text("chain_status").notNull().default("platform"),
+    /** The transaction that wrote it to the registry. */
+    chainRef: text("chain_ref"),
+    chainProblem: text("chain_problem"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("engagement_ratings_seller_idx").on(t.sellerProfileId, t.createdAt),
+    check("engagement_ratings_stars_range", sql`${t.stars} between 1 and 5`),
+    check(
+      "engagement_ratings_chain_status",
+      sql`${t.chainStatus} in ('platform', 'sending', 'sent', 'confirmed', 'failed', 'uncertain')`,
+    ),
+  ],
+);
+
+/**
+ * A problem with an engagement, put to 905 Finance to validate. Opened by the
+ * buyer, or by a rating of one or two stars. Decided by a 905 Finance
+ * operator who belongs to neither side.
+ */
+export const validationCases = pgTable(
+  "validation_cases",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    engagementId: uuid("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "cascade" }),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    sellerProfileId: uuid("seller_profile_id")
+      .notNull()
+      .references(() => sellerProfiles.id, { onDelete: "cascade" }),
+    ratingId: uuid("rating_id").references(() => engagementRatings.id, { onDelete: "set null" }),
+    /** low_rating or reported. */
+    origin: text("origin").notNull(),
+    reason: text("reason").notNull(),
+    openedBy: uuid("opened_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    sellerResponse: text("seller_response"),
+    sellerRespondedBy: uuid("seller_responded_by").references(() => users.id, { onDelete: "set null" }),
+    sellerRespondedAt: timestamp("seller_responded_at", { withTimezone: true }),
+    /** open, upheld (the buyer's complaint stands) or not_upheld. */
+    status: text("status").notNull().default("open"),
+    /** The validator's score for the seller's work, 0 to 100, as ERC-8004 expresses a validation. */
+    score: integer("score"),
+    verdictNote: text("verdict_note"),
+    decidedBy: uuid("decided_by").references(() => users.id, { onDelete: "set null" }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    /** The hash of what was put to the validator, fixed when the case is opened. */
+    requestHash: text("request_hash").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("validation_cases_status_idx").on(t.status, t.createdAt),
+    index("validation_cases_seller_idx").on(t.sellerProfileId, t.createdAt),
+    // One case at a time per engagement.
+    uniqueIndex("validation_cases_one_open_uq")
+      .on(t.engagementId)
+      .where(sql`${t.status} = 'open'`),
+    check("validation_cases_origin", sql`${t.origin} in ('low_rating', 'reported')`),
+    check("validation_cases_status", sql`${t.status} in ('open', 'upheld', 'not_upheld')`),
+    check("validation_cases_score_range", sql`${t.score} is null or ${t.score} between 0 and 100`),
+    check(
+      "validation_cases_decided_together",
+      sql`(${t.status} = 'open') = (${t.decidedAt} is null) and (${t.status} = 'open') = (${t.score} is null)`,
+    ),
+  ],
+);
+
 export type User = typeof users.$inferSelect;
 export type Organization = typeof organizations.$inferSelect;
 export type OrganizationMembership = typeof organizationMemberships.$inferSelect;
@@ -1302,6 +1436,9 @@ export type ApprovalRequest = typeof approvalRequests.$inferSelect;
 export type AgentMessage = typeof agentMessages.$inferSelect;
 export type QatomConnection = typeof qatomConnections.$inferSelect;
 export type SellerIdentity = typeof sellerIdentities.$inferSelect;
+export type BuyerIdentity = typeof buyerIdentities.$inferSelect;
+export type EngagementRating = typeof engagementRatings.$inferSelect;
+export type ValidationCase = typeof validationCases.$inferSelect;
 export type FundReturn = typeof fundReturns.$inferSelect;
 export type GoatFlowOrder = typeof goatFlowOrders.$inferSelect;
 export type Settlement = "simulated" | "goat_testnet3";

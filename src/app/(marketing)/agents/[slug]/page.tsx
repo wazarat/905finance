@@ -1,3 +1,4 @@
+import { getSellerReputationBySlug } from "@/server/reputation";
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import Link from "next/link";
@@ -38,6 +39,7 @@ async function SellerProfile({ params }: { params: Promise<{ slug: string }> }) 
     <SellerDetail
       seller={seller}
       action={<SelectSellerPanel slug={seller.slug} />}
+      reputation={await getSellerReputationBySlug(seller.slug)}
     />
   );
 }

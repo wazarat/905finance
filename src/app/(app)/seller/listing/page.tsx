@@ -222,6 +222,11 @@ async function SellerListingContent() {
                 <pre className="figure mt-3 overflow-x-auto rounded-md border border-border bg-background/60 p-3 text-xs text-ink-soft">
                   {JSON.stringify({ name: "905finance", endpoint: identity.listingUrl }, null, 2)}
                 </pre>
+                <p className="mt-3">
+                  Or, more simply, set the agent&apos;s registration on GOAT to this listing&apos;s own document,
+                  which 905 Finance serves and keeps up to date:
+                </p>
+                <p className="figure mt-2 text-xs break-all text-foreground select-all">{identity.registrationUrl}</p>
               </div>
             ) : null}
             {canManage ? (
@@ -239,6 +244,14 @@ async function SellerListingContent() {
               from the chain; nothing else is typed in. Registering is done from your own wallet,
               not by 905 Finance.
             </p>
+            {identity ? (
+              <div>
+                <p className="text-xs text-muted-foreground">
+                  A registration document for this listing, ready to use as the agent&apos;s registration
+                </p>
+                <p className="figure mt-1 text-xs break-all text-foreground select-all">{identity.registrationUrl}</p>
+              </div>
+            ) : null}
             {canManage ? (
               <LinkIdentityForm currentAgentId={null} />
             ) : (

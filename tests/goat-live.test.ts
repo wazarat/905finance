@@ -2,6 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import {
+  keccak256,
+  stringToBytes,
   encodeAbiParameters,
   encodeEventTopics,
   erc20Abi,
@@ -33,8 +35,19 @@ import { setGoatClient } from "@/server/goat/chain";
 import { setGoatFlow, type FlowOrder, type GoatFlow } from "@/server/goat/flow";
 import { goatLiveConfig, goatLiveGaps, resetGoatLiveChecks } from "@/server/goat/live";
 import { setSafeFetchHooks } from "@/server/goat/safe-fetch";
-import { setGoatSigner, type GoatSigner } from "@/server/goat/signer";
-import { linkSellerIdentityAsOperator } from "@/server/identity";
+import { setGoatSigner, type FeedbackTransaction, type GoatSigner } from "@/server/goat/signer";
+import {
+  buyerRegistrationDocument,
+  buyerRegistrationPath,
+  getOwnBuyerIdentity,
+  hostedUrl,
+  linkBuyerIdentity,
+  linkSellerIdentityAsOperator,
+  refreshBuyerIdentity,
+  sellerRegistrationPath,
+  unlinkBuyerIdentity,
+} from "@/server/identity";
+import { checkRatingOnChain, getRatingDocument, getSellerReputation, rateEngagement, ratingPath } from "@/server/reputation";
 import { goatFlowTiming } from "@/server/payments/goat-flow";
 import { reconcilePurchase } from "@/server/policy";
 import { createProject } from "@/server/projects";
@@ -78,6 +91,7 @@ class FakeChain {
   gas = new Map<string, bigint>();
   receipts = new Map<string, unknown>();
   agentWallet: Address = SELLER_WALLET;
+  agentUri = "https://agent.example/7.json";
   down = false;
 
   client(): PublicClient {
@@ -105,7 +119,7 @@ class FakeChain {
         if (address === ERC8004_TESTNET3.identityRegistry) {
           if (args![0] !== 7n) throw new Error("ERC721NonexistentToken");
           if (functionName === "ownerOf") return SELLER_OWNER;
-          if (functionName === "tokenURI") return "https://agent.example/7.json";
+          if (functionName === "tokenURI") return this.agentUri;
           if (functionName === "getAgentWallet") return this.agentWallet;
         }
         if (address === ERC8004_TESTNET3.reputationRegistry) return functionName === "getClients" ? [] : [0n, 0n, 0];
@@ -148,6 +162,7 @@ class FakeSigner implements GoatSigner {
   wallets = new Map<string, { id: string; address: Address }>();
   sent: Array<{ walletId: string; from: Address; token: Address; to: Address; amountUnits: bigint }> = [];
   mode: "ok" | "throws" | "reverts" | "slow" = "ok";
+  feedback: FeedbackTransaction[] = [];
 
   constructor(private readonly chain: FakeChain) {}
 
@@ -175,6 +190,20 @@ class FakeSigner implements GoatSigner {
       // A slow transfer sits in the newest block, so it does not yet have blocks on top.
       block: this.mode === "slow" ? this.chain.head : undefined,
     });
+  }
+
+  async sendFeedback(input: FeedbackTransaction) {
+    if (this.mode === "throws") throw new Error("privy unavailable");
+    this.feedback.push(input);
+    const hash = `0x${createHash("sha256").update(randomUUID()).digest("hex")}` as Hash;
+    this.chain.receipts.set(hash, {
+      status: this.mode === "reverts" ? "reverted" : "success",
+      blockNumber: this.mode === "slow" ? this.chain.head : this.chain.head - 5n,
+      from: input.from,
+      to: ERC8004_TESTNET3.reputationRegistry,
+      logs: [],
+    });
+    return hash;
   }
 }
 
@@ -862,5 +891,140 @@ describe("returning real unused funds", () => {
     expect(await simulated()).toBe(before);
     expect(signer.sent).toEqual([]);
     expect(chain.token.get(wallet)).toBe(25n * ONE);
+  });
+});
+
+describe("identity for both sides", () => {
+  const buyerProfileOf = async (buyer: Buyer) =>
+    (await db.select().from(schema.buyerProfiles).where(eq(schema.buyerProfiles.organizationId, buyer.org)))[0];
+
+  it("confirms a listing whose agent is registered with the listing's own document", async () => {
+    // The agent's document says nothing about the listing, but the agent's registration IS the listing's document.
+    documentBody = registrationFor(null);
+    chain.agentUri = hostedUrl(sellerRegistrationPath(relay.slug));
+    expect((await linkSellerIdentityAsOperator(relay.slug, "7")).confirmed).toBe(true);
+    // The same path on someone else's site proves nothing.
+    chain.agentUri = `https://elsewhere.example${sellerRegistrationPath(relay.slug)}`;
+    expect((await linkSellerIdentityAsOperator(relay.slug, "7")).confirmed).toBe(false);
+    // Nor does another listing's document.
+    chain.agentUri = hostedUrl(sellerRegistrationPath(plain.slug));
+    expect((await linkSellerIdentityAsOperator(relay.slug, "7")).confirmed).toBe(false);
+  });
+
+  it("gives a buying agent an identity, read from the chain and confirmed only by its own registration", async () => {
+    const profile = await buyerProfileOf(acme);
+    // Agent 7 is the seller's: one agent cannot be on both sides.
+    await expect(linkBuyerIdentity(acme.owner, acme.org, { agentId: "7" })).rejects.toMatchObject({ code: "conflict" });
+    await db.delete(schema.sellerIdentities);
+
+    await expect(linkBuyerIdentity(null, acme.org, { agentId: "7" })).rejects.toMatchObject({ code: "unauthenticated" });
+    await expect(linkBuyerIdentity(globex.owner, acme.org, { agentId: "7" })).rejects.toMatchObject({ code: "forbidden" });
+    expect((await linkBuyerIdentity(acme.owner, acme.org, { agentId: "9" }).catch((e) => e)).fieldErrors.agentId).toBeDefined();
+
+    const claimed = await linkBuyerIdentity(acme.owner, acme.org, { agentId: "7" });
+    expect(claimed).toMatchObject({ agentId: "7", ownerAddress: SELLER_OWNER, confirmed: false });
+    // Another organization cannot take the same agent, and a listing cannot either.
+    await expect(linkBuyerIdentity(globex.owner, globex.org, { agentId: "7" })).rejects.toMatchObject({ code: "conflict" });
+    await expect(linkSellerIdentityAsOperator(relay.slug, "7")).rejects.toMatchObject({ code: "conflict" });
+
+    const own = (await getOwnBuyerIdentity(acme.owner, acme.org))!;
+    expect(own.registrationUrl).toBe(hostedUrl(buyerRegistrationPath(profile.id)));
+    expect(await buyerRegistrationDocument(profile.id)).toMatchObject({
+      registrations: [{ agentId: "7", agentRegistry: ERC8004_AGENT_REGISTRY }],
+    });
+
+    // Pointing the agent at another buyer's document does not confirm this one.
+    chain.agentUri = hostedUrl(buyerRegistrationPath((await buyerProfileOf(globex)).id));
+    expect((await refreshBuyerIdentity(acme.owner, acme.org))!.confirmed).toBe(false);
+    chain.agentUri = own.registrationUrl;
+    expect((await refreshBuyerIdentity(acme.owner, acme.org))!.confirmed).toBe(true);
+
+    await unlinkBuyerIdentity(acme.owner, acme.org);
+    expect((await getOwnBuyerIdentity(acme.owner, acme.org))!.identity).toBeNull();
+  });
+});
+
+describe("a rating on GOAT", () => {
+  /** A real engagement with one paid purchase. */
+  async function bought() {
+    const made = await active();
+    await run(acme, made.id);
+    return made;
+  }
+
+  it("is written to the Reputation Registry from the engagement's own wallet, once", async () => {
+    const { id, wallet } = await bought();
+    const { rating } = await rateEngagement(acme.owner, id, { stars: 4, comment: "Clear report." });
+    expect(rating).toMatchObject({ stars: 4, sellerAgentId: "7", chainStatus: "confirmed" });
+    expect(rating.chainRef).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(signer.feedback).toHaveLength(1);
+    expect(signer.feedback[0]).toMatchObject({
+      from: wallet,
+      agentId: 7n,
+      value: 80n,
+      valueDecimals: 0,
+      tag1: "starred",
+      feedbackUri: hostedUrl(ratingPath(rating.id)),
+      feedbackHash: rating.feedbackHash,
+    });
+    // What the registry was given the hash of is exactly what is published.
+    expect(keccak256(stringToBytes((await getRatingDocument(rating.id))!))).toBe(rating.feedbackHash);
+    expect(await getRatingDocument(rating.id)).not.toContain("Clear report");
+    // It moved no tokens.
+    expect(signer.sent).toHaveLength(1);
+    await expect(rateEngagement(acme.owner, id, { stars: 5 })).rejects.toMatchObject({ code: "conflict" });
+    expect(signer.feedback).toHaveLength(1);
+    expect((await getSellerReputation(relay.id)).onChain).toBeGreaterThanOrEqual(1);
+  });
+
+  it("stays on the platform for an engagement that is not on a chain, and for a seller with no confirmed agent", async () => {
+    const simulatedId = await drafted(acme, plain);
+    await authorizeEngagement(acme.owner, simulatedId, { confirmed: true });
+    await provisionEngagementWallet(acme.owner, simulatedId);
+    await depositSimulatedFunds(acme.owner, acme.org, { amount: "100" });
+    await authorizeFunding(acme.owner, simulatedId, { amount: "25", idempotencyKey: randomUUID(), confirmed: true });
+    await runAgent(acme.owner, simulatedId, { runKey: randomUUID() }, {
+      name: "test",
+      next: (() => {
+        let done = false;
+        return async () => {
+          if (done) return { tool: "finish" as const, input: { summary: "Done." } };
+          done = true;
+          return { tool: "purchase_service" as const, input: { offeringId: plain.offering, reason: "test" } };
+        };
+      })(),
+    });
+    const { rating } = await rateEngagement(acme.owner, simulatedId, { stars: 5 });
+    expect(rating).toMatchObject({ chainStatus: "platform", chainRef: null, sellerAgentId: null });
+    expect(signer.feedback).toEqual([]);
+  });
+
+  it("is never sent twice when it cannot be told whether it went out", async () => {
+    const { id } = await bought();
+    signer.mode = "throws";
+    const { rating } = await rateEngagement(acme.owner, id, { stars: 5 });
+    expect(rating).toMatchObject({ chainStatus: "uncertain", chainRef: null });
+    signer.mode = "ok";
+    expect(await checkRatingOnChain(acme.owner, id)).toMatchObject({ chainStatus: "uncertain" });
+    expect(signer.feedback).toEqual([]);
+    // The rating itself stands.
+    expect((await getSellerReputation(relay.id)).ratings).toBeGreaterThanOrEqual(1);
+  });
+
+  it("waits for the chain by asking again, and records a rejected one as not written", async () => {
+    const slow = await bought();
+    signer.mode = "slow";
+    const sent = (await rateEngagement(acme.owner, slow.id, { stars: 3 })).rating;
+    expect(sent.chainStatus).toBe("sent");
+    expect(await checkRatingOnChain(acme.owner, slow.id)).toMatchObject({ chainStatus: "sent" });
+    await expect(checkRatingOnChain(globex.owner, slow.id)).rejects.toMatchObject({ code: "not_found" });
+    chain.head += 3n;
+    expect(await checkRatingOnChain(acme.owner, slow.id)).toMatchObject({ chainStatus: "confirmed", chainRef: sent.chainRef });
+    expect(signer.feedback).toHaveLength(1);
+
+    signer.mode = "ok";
+    const rejected = await bought();
+    signer.mode = "reverts";
+    expect((await rateEngagement(acme.owner, rejected.id, { stars: 4 })).rating).toMatchObject({ chainStatus: "failed" });
   });
 });

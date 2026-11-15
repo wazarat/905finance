@@ -38,6 +38,7 @@ import {
   type WalletChainState,
 } from "@/server/engagements";
 import { getEngagementStatement } from "@/server/closure";
+import { getEngagementFeedback } from "@/server/reputation";
 import { isAppError } from "@/server/errors";
 import { requireWorkspace } from "@/server/page-context";
 import {
@@ -58,6 +59,7 @@ import {
   MandateForm,
   ProvisionWalletForm,
 } from "./engagement-forms";
+import { FeedbackPanel } from "./feedback-panel";
 
 export const metadata: Metadata = { title: "Engagement" };
 
@@ -281,6 +283,7 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
   const { engagement, seller, project, mandate, wallet, can } = detail;
   const chain = wallet && !wallet.isSimulated ? await getWalletChainState(actor, id) : null;
   const statement = wallet ? await getEngagementStatement(actor, id) : null;
+  const feedback = await getEngagementFeedback(actor, id);
   const state = engagement.state;
   const ended = isTerminal(state);
 
@@ -579,6 +582,8 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
           </ul>
         </Panel>
       ) : null}
+
+      <FeedbackPanel engagementId={id} sellerName={seller.displayName} feedback={feedback} />
 
       <Panel title="History" description="Every change of state, in order.">
         <ol className="space-y-4">

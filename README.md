@@ -20,6 +20,7 @@ The product was built in seven milestones, one at a time. All seven are built. W
 | 6 | GOAT Network: ERC-8004 identity and payment | Identity and reputation **live on Testnet3**; wallets and payments **built**, awaiting Privy, a GOAT Flow test merchant and test funds |
 | 7 | End-to-end integration and deployment | **Complete** on simulated settlement; deployed. The live Qatom and GOAT runs await the items above |
 | 8 | Presentation and security findings | **Complete** |
+| 9 | ERC-8004 identity, ratings and validation | **Complete** on the platform; ratings reach GOAT's Reputation Registry once an engagement has a real wallet |
 
 ### What works today (Milestone 1)
 
@@ -116,6 +117,19 @@ Until a Qatom account is linked and a seller has a catalog item, agents reach th
 - **No demonstration labels.** The marketplace, engagement pages and reports no longer carry sample or demo tags. What remains is what a person needs to know about money: a **Test funds** marker on wallets and payments that are not on a chain, and the status panel in Settings.
 - **A security scan that names the weakness and shows the code.** A new service, sold by Relay QA, runs ESLint with `eslint-plugin-security` over the project's source. The bundled ordering service has four planted weaknesses (code injection through `eval`, a timing-unsafe token comparison, a path built from request input, a search pattern built from user input) and the scan finds all four. The code being scanned cannot switch a rule off.
 - **The code behind every finding.** Each finding now carries the lines it points at, read by the worker from the project itself, with the reported lines marked. This applies to failing tests, Slither findings and the security scan alike.
+
+### What works today (Milestone 9)
+
+ERC-8004 has three parts: identity, reputation and validation. All three now have a place in the product.
+
+- **Identity for both sides.** A seller's agent and a buyer's purchasing agent can each be linked to an ERC-8004 agent id on GOAT Testnet3. The id is all anyone types; the owner and registration are read from the chain. One agent cannot be on both sides, or belong to two organizations.
+- **A registration document for every agent.** 905 Finance serves an ERC-8004 registration document for each active listing (`/agents/<slug>/registration.json`) and for each buying agent (at an address holding the buyer's own unguessable id). Registering an agent with that address as its registration is what confirms the link: only the agent's owner can set it.
+- **Reputation: one to five stars.** Once something has been bought, an owner or admin of the buying organization rates the seller, once per engagement. A rating cannot be edited. Sellers see their ratings with the comments; the public sees an average, a count and the spread, with no names and no comments.
+- **Ratings on GOAT.** When the engagement settled on GOAT and the seller has a confirmed agent, the rating is also written to GOAT's Reputation Registry (`giveFeedback`, each star worth 20 on the registry's 0 to 100 scale) from the engagement's own wallet, with the hash of a public document describing it. It is sent once; if it cannot be told whether it went out, it is left in doubt and never sent again. Otherwise the rating is kept by 905 Finance, and says so.
+- **Validation by 905 Finance.** A rating of one or two stars, or a problem the buyer reports, opens a case. The seller may reply once. A 905 Finance validator then reads both sides next to the testing worker's own record of what ran, and gives a final verdict: upheld or not, with a score from 0 to 100 for the seller's work and the reason. Both sides see it, and the counts appear on the seller's public page.
+- **Who validates.** The people named in `PLATFORM_OPERATOR_EMAILS`, matched against their verified sign-in. To everyone else the queue does not exist. A validator cannot decide a case that involves an organization they belong to.
+
+**What is on a chain and what is not.** Identity is read from GOAT Testnet3 today. Ratings are written there only for engagements with a real wallet, which still needs real settlement to be switched on; that path is tested against stand-ins. GOAT's documentation lists no Validation Registry on Testnet3, so cases and verdicts are recorded by 905 Finance. Each case stores a hash of what was put to the validator, fixed when it is opened.
 
 ### What is not live yet
 
@@ -314,6 +328,17 @@ engagement wallet ── transfer ──▶ seller's registry wallet         one
                                   └── read back from the chain before the purchase counts as paid
 ```
 
+### Registering an agent
+
+An agent is registered from its owner's own wallet; 905 Finance holds no key to it and does not do it for anyone. The simplest registration is the document 905 Finance serves for the listing or the buying agent (shown on the Listing page and in Settings):
+
+```bash
+cast send 0x54B8d8E2455946f2A5B8982283f2359812e815ce "register(string)" "<registration document address>" \
+  --rpc-url https://rpc.testnet3.goat.network --private-key <your key>
+```
+
+The registry gives the agent an id. Enter that id on the Listing page (for a seller) or in Settings (for a buying agent). Because the agent's registration is the document for exactly that listing or buyer, the link is confirmed at once.
+
 ### Linking a seller's identity
 
 1. Register the agent in the Identity Registry on GOAT Testnet3 (`0x54B8d8E2455946f2A5B8982283f2359812e815ce`) from your own wallet. 905 Finance does not register agents or hold a key that could.
@@ -348,6 +373,7 @@ Import the repository in Vercel, then add these in **Project → Settings → En
 | `SESSION_SECRET` | 32+ random characters (`openssl rand -base64 48`). |
 | `NEXT_PUBLIC_PRIVY_APP_ID`, `PRIVY_APP_SECRET` | From the Privy dashboard, for a Privy app dedicated to this site. |
 | `NEXT_PUBLIC_APP_URL` | The deployment's public URL. |
+| `PLATFORM_OPERATOR_EMAILS` | Optional. The sign-in email addresses of the people who decide validation cases, separated by commas. Without it, cases wait. |
 | `WORKER_TOKEN` | 32+ random characters, shared with the testing worker. Optional: without it, or with no worker running, sellers decline to quote and no test is bought. |
 
 The testing worker does not run on Vercel. Host the worker image somewhere that can reach the site (see [The testing worker](#the-testing-worker)).
@@ -394,6 +420,7 @@ src/server/payments/   payment-provider interface and the demo provider
 src/server/agent/      agent runtime, brain interface, seller transport and demo seller
 src/server/goat/       Testnet3 access, ERC-8004 reads, GOAT Flow client, the signer, guarded document fetch
 src/server/identity.ts linking a listing to its on-chain identity
+src/server/reputation.ts  star ratings, problems put to 905 Finance, the validator's verdicts
 src/server/closure.ts  completing an engagement, returning unused funds, the final record
 src/server/audit-log.ts, status.ts   the activity log; what is live, simulated or off
 src/server/qatom/      Qatom account link, signed messages, MCP client, seller endpoint checks
@@ -529,5 +556,7 @@ The Qatom suite runs against a stand-in built from Qatom's published behaviour, 
 The GOAT suite runs against stand-ins for the chain, Privy and GOAT Flow. The ERC-8004 reader was also run by hand against real agents on Testnet3.
 
 - The final suite (`tests/final.test.ts`): the complete demonstration from a verified sign-in to a closed engagement, with a real Vitest run in the middle, a blocked purchase, an approved budget, separately authorized funding, a resumed agent, and a final record that reconciles; a second engagement with another seller that shares nothing with the first; each of the eighteen security invariants as its own named check; completion and fund returns, simulated and on Testnet3 stand-ins; re-running a failed test without a second charge; and the activity log and status panel showing only what the viewer may see.
+
+- Reputation and validation: ratings limited to one to five stars, once per engagement, by the buyer's owner or admin, and only after something was bought; low ratings and reported problems opening one case at a time; the seller's single reply; the validator named only by the deployment's settings and invisible to everyone else; a verdict whose score has to agree with it, given once, never by someone on either side; a public reputation that carries no names or comments; registration documents that count only at this application's own address; a buying agent confirmed only by its own registration; and a rating written to GOAT once, from the engagement's wallet, and never re-sent when its outcome is unknown.
 
 The testing suite also **executes the real tools** against the bundled fixtures, through the same worker code and submission path the application uses, and asserts the figures they report (for example, Vitest: 6 tests, 5 passed, 1 failed). The Vitest cases always run; the Foundry and Slither cases run when those tools are on `PATH` and are skipped otherwise.

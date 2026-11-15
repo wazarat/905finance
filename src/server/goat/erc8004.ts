@@ -1,8 +1,8 @@
 import "server-only";
-import { getAddress, isAddressEqual, parseAbi, zeroAddress, type Address } from "viem";
+import { getAddress, isAddressEqual, parseAbi, zeroAddress, type Address, type Hash } from "viem";
 import { z } from "zod";
 import { ERC8004_AGENT_REGISTRY, ERC8004_TESTNET3, GOAT_TESTNET3 } from "@/lib/goat";
-import { assertTestnet3, goatClient } from "./chain";
+import { SETTLED_CONFIRMATIONS, assertTestnet3, goatClient } from "./chain";
 import { fetchPublicJson } from "./safe-fetch";
 
 /**
@@ -25,6 +25,18 @@ const reputationAbi = parseAbi([
   "function getClients(uint256 agentId) view returns (address[])",
   "function getSummary(uint256 agentId, address[] clientAddresses, string tag1, string tag2) view returns (uint64 count, int128 summaryValue, uint8 summaryValueDecimals)",
 ]);
+
+/**
+ * The Reputation Registry's function for leaving feedback, as deployed on GOAT
+ * Testnet3 (confirmed against the contract's own code). The value is a rating
+ * with `valueDecimals` decimal places; the URI and hash point at a public
+ * document describing the feedback.
+ */
+export const feedbackAbi = parseAbi([
+  "function giveFeedback(uint256 agentId, int128 value, uint8 valueDecimals, string tag1, string tag2, string endpoint, string feedbackURI, bytes32 feedbackHash)",
+]);
+
+export const REPUTATION_REGISTRY = ERC8004_TESTNET3.reputationRegistry as Address;
 
 const identityRegistry = ERC8004_TESTNET3.identityRegistry as Address;
 const reputationRegistry = ERC8004_TESTNET3.reputationRegistry as Address;
@@ -195,6 +207,41 @@ export async function readAgentReputation(agentId: bigint): Promise<AgentReputat
   const whole = digits.slice(0, digits.length - decimals);
   const fraction = decimals > 0 ? `.${digits.slice(-decimals)}` : "";
   return { clients: clients.length, count: Number(count), value: `${negative ? "-" : ""}${whole}${fraction}` };
+}
+
+/**
+ * Whether a transaction that was meant to leave feedback did so: it succeeded,
+ * was sent by the expected wallet to the Reputation Registry, and has blocks
+ * on top of it. `pending` means it may still, and should be asked about again.
+ */
+export async function verifyFeedbackTransaction(expected: {
+  hash: Hash;
+  from: Address;
+}): Promise<{ ok: true } | { ok: false; pending: boolean; reason: string }> {
+  await assertTestnet3();
+  const chain = goatClient();
+  let receipt;
+  try {
+    receipt = await chain.getTransactionReceipt({ hash: expected.hash });
+  } catch {
+    // Not mined yet is indistinguishable here from never sent: it stays in doubt.
+    return { ok: false, pending: true, reason: "The transaction is not in a block yet." };
+  }
+  if (receipt.status !== "success") {
+    return { ok: false, pending: false, reason: "The registry rejected the feedback." };
+  }
+  if (
+    !receipt.to ||
+    !isAddressEqual(receipt.to, reputationRegistry) ||
+    !isAddressEqual(receipt.from, expected.from)
+  ) {
+    return { ok: false, pending: false, reason: "That transaction is not this rating." };
+  }
+  const head = await chain.getBlockNumber();
+  if (head - receipt.blockNumber + 1n < SETTLED_CONFIRMATIONS) {
+    return { ok: false, pending: true, reason: "The transaction is waiting for more blocks." };
+  }
+  return { ok: true };
 }
 
 export const ERC8004_NETWORK = GOAT_TESTNET3.name;
