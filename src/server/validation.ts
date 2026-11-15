@@ -1,6 +1,6 @@
 import { getAddress } from "viem";
 import { isEvmAddress } from "@/lib/goat";
-import { FILE_LIMITS, MAX_ADDRESSES, isSharedFileName } from "@/lib/repository";
+import { FILE_LIMITS, MAX_ADDRESSES, isCheckableWebsite, isSharedFileName } from "@/lib/repository";
 import { z } from "zod";
 import {
   CAPABILITY_KEYS,
@@ -101,6 +101,14 @@ export const projectInput = z
       const problem = sharedFilesProblem(files);
       if (problem) ctx.addIssue({ code: "custom", path: ["files"], message: problem });
       // A project of your own has to share something that can be looked at.
+      if (value.applicationUrl && isHttpUrl(value.applicationUrl, { httpsOnly: false }) && !isCheckableWebsite(value.applicationUrl)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["applicationUrl"],
+          message:
+            "Enter the site's public address, such as https://www.example.com. Numeric, local and private addresses, and unusual ports, cannot be checked.",
+        });
+      }
       if (!value.repositoryUrl && !value.applicationUrl && files.length === 0 && addresses.length === 0) {
         ctx.addIssue({
           code: "custom",

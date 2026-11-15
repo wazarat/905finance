@@ -4,6 +4,7 @@ import {
   SHARED_CAPABILITIES,
   extensionOf,
   fileExtensionsFor,
+  isCheckableWebsite,
   isRepositoryCapability,
   parseGitHubRepository,
   type GitHubRepository,
@@ -13,7 +14,6 @@ import { and, asc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema, type DbOrTx } from "@/db/client";
 import type { JobSource, Project, TestingJob } from "@/db/schema";
-import { isHttpUrl } from "../validation";
 import { getCapability } from "@/lib/capabilities";
 import { CAPABILITY_TOOLS, SEVERITIES, describeResult } from "@/lib/testing";
 import { recordAudit } from "../audit";
@@ -106,7 +106,7 @@ const NOTHING_SHARED: Record<string, string> = {
     "This project shares no JavaScript or TypeScript to scan. Add a public GitHub repository, or share some source files.",
   solidity_review:
     "This project shares no Solidity to review. Add a public GitHub repository, or share some .sol files.",
-  website_check: "This project has no website address to check. Add one to the project.",
+  website_check: "This project has no public website address to check. Add one to the project.",
   contract_check: "This project shares no contract addresses to check. Add them to the project.",
 };
 
@@ -133,8 +133,8 @@ export async function targetOf(
       const wanted = fileExtensionsFor(capability);
       if (names.some((file) => wanted.includes(extensionOf(file.name)))) return { key: kind, source: { kind } };
     } else if (kind === "website") {
-      if (project.applicationUrl && isHttpUrl(project.applicationUrl, { httpsOnly: false })) {
-        return { key: kind, source: { kind, url: project.applicationUrl } };
+      if (isCheckableWebsite(project.applicationUrl)) {
+        return { key: kind, source: { kind, url: project.applicationUrl!.trim() } };
       }
     } else if (project.contractAddresses.length > 0) {
       return { key: kind, source: { kind, addresses: project.contractAddresses.slice(0, MAX_ADDRESSES) } };

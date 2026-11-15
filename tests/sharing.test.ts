@@ -19,6 +19,7 @@ import {
   provisionEngagementWallet,
   saveMandateDraft,
 } from "@/server/engagements";
+import { isCheckableWebsite } from "@/lib/repository";
 import { createProject } from "@/server/projects";
 import { runProofs } from "@/server/proofs";
 import { createOffering, saveSellerEndpoint, updateSellerListing } from "@/server/sellers";
@@ -276,7 +277,7 @@ describe("a first look at what a project shares", () => {
     expect((await claim(PAIRS, "second-reader"))!.files).toEqual([{ name: "vault.sol", content: "contract Vault {}\n" }]);
     expect(review.job.fixtureKey).toBe("files");
     expect(asked).toBe(0);
-    expect(await declined(project.id, "website_check")).toContain("no website address");
+    expect(await declined(project.id, "website_check")).toContain("no public website address");
 
     // Solidity alone is nothing for the JavaScript scan to read.
     const contracts = await createProject(buyer, org, { ...own, name: "Solidity only", files: [{ name: "token.sol", content: "contract T {}" }] });
@@ -318,6 +319,30 @@ describe("a first look at what a project shares", () => {
     const { job } = await sold(project.id, "website_check");
     expect(await claim(["files:security_scan", "contracts:contract_check"])).toBeNull();
     expect((await claim(["website:website_check"]))!.id).toBe(job.id);
+  });
+
+  it("is never quoted for a website address that could not be opened", async () => {
+    for (const bad of [
+      "http://192.168.1.1",
+      "http://127.0.0.1:3000",
+      "http://localhost:3000",
+      "https://www.example.com:8443",
+      "http://2130706433/",
+      "http://[::1]/",
+      "https://db.internal/",
+      "https://intranet/",
+    ]) {
+      expect(isCheckableWebsite(bad), bad).toBe(false);
+      const error = await createProject(buyer, org, { ...own, name: "Private site", applicationUrl: bad }).catch((e) => e);
+      expect(error.fieldErrors?.applicationUrl?.[0], bad).toContain("public address");
+    }
+    for (const good of ["https://www.example.com", "http://example.org/path?q=1", " https://sub.domain.example.co.uk/ "]) {
+      expect(isCheckableWebsite(good), good).toBe(true);
+    }
+    // A project that somehow carries such an address is declined before any payment, not charged for an error.
+    const project = await createProject(buyer, org, { ...own, name: "Changed site", applicationUrl: "https://www.example.com" });
+    await db.update(schema.projects).set({ applicationUrl: "http://169.254.169.254/latest/meta-data/" }).where(eq(schema.projects.id, project.id));
+    expect(await declined(project.id, "website_check")).toContain("no public website address");
   });
 
   it("is for your own project: a bundled fixture has no website or addresses to read", async () => {

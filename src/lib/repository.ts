@@ -73,3 +73,24 @@ export function isSharedFileName(name: string): boolean {
 export function fileExtensionsFor(capability: string): readonly string[] {
   return capability === "solidity_review" ? SOLIDITY_EXTENSIONS : capability === "security_scan" ? SCRIPT_EXTENSIONS : [];
 }
+
+/**
+ * Whether a website address is one a website check will open: a site's name,
+ * over http or https, on the usual port. Numeric, local and private names are
+ * refused here so that nobody is quoted for a check that cannot happen. The
+ * worker applies the same rule again, and also checks where the name leads.
+ */
+export function isCheckableWebsite(input: string | null | undefined): boolean {
+  let url: URL;
+  try {
+    url = new URL(String(input ?? "").trim());
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  if (url.username || url.password || url.port) return false;
+  const host = url.hostname.toLowerCase();
+  if (host.startsWith("[") || /^[0-9.]+$/.test(host) || /^0x/.test(host)) return false;
+  if (!host.includes(".") || host.endsWith(".")) return false;
+  return !/\.(local|localhost|internal|lan|home|corp|test|invalid|example)$/.test(host);
+}
