@@ -1,9 +1,10 @@
 "use server";
 
 import { refresh } from "next/cache";
+import { after } from "next/server";
 import { failureState, type FormState } from "@/server/form-state";
 import { requireActionWorkspace } from "@/server/page-context";
-import { runProofs } from "@/server/proofs";
+import { runProofs, settleProofs } from "@/server/proofs";
 
 /** Fingerprint what is new and write what is waiting to GOAT. Any signed-in member may ask; it moves nothing. */
 export async function runProofsAction(_prev: FormState, _formData: FormData): Promise<FormState> {
@@ -17,7 +18,14 @@ export async function runProofsAction(_prev: FormState, _formData: FormData): Pr
   refresh();
   switch (outcome.state) {
     case "sent":
-      return { ok: true, message: `Sent ${outcome.sent} ${outcome.sent === 1 ? "fingerprint" : "fingerprints"} to GOAT Testnet3.` };
+      // The chain needs a few seconds to settle it. Record that once it has, after this response.
+      after(async () => {
+        await settleProofs(8_000);
+      });
+      return {
+        ok: true,
+        message: `Sent ${outcome.sent} ${outcome.sent === 1 ? "fingerprint" : "fingerprints"} to GOAT Testnet3. Reload in a few seconds to see them confirmed.`,
+      };
     case "idle":
       return { ok: true, message: "Nothing is waiting. Every record's proof is up to date." };
     case "busy":

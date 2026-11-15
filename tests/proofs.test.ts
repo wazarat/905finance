@@ -357,6 +357,11 @@ describe("writing fingerprints to GOAT", () => {
     expect(await getProof(acme.owner, payment.id)).toMatchObject({ state: "sent", verified: false });
     expect((await listProofs(acme.owner, acme.org, "payment", [payment.entityId])).get(payment.entityId)).toMatchObject({ state: "sent" });
     chain.head += 3n;
+    // Reading the proof once the chain has settled it records that, without waiting for another run.
+    const settled = await getProof(acme.owner, payment.id);
+    expect(settled).toMatchObject({ state: "confirmed", verified: true });
+    expect(settled.batch!.blockNumber).not.toBeNull();
+    expect((await batches()).filter((batch) => batch.status === "sent")).toEqual([]);
     expect((await runProofs()).state).toBe("idle");
     expect(await getProof(acme.owner, payment.id)).toMatchObject({ state: "confirmed", verified: true });
   });

@@ -361,6 +361,36 @@ async function writeBatch(config: ProofConfig): Promise<Omit<ProofRun, "added">>
   return { state: "sent", sent: members.length };
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * The same as `runProofs`, and then, if a batch was sent, a short wait for the
+ * chain to put blocks on top of it before recording that it settled. For work
+ * done after a response has gone out, where waiting costs nobody anything.
+ */
+export async function runProofsAndSettle(waitMs = 8_000): Promise<ProofRun> {
+  const outcome = await runProofs();
+  if (outcome.state === "sent") {
+    try {
+      await sleep(waitMs);
+      await settleBatches();
+    } catch (error) {
+      console.error("A proof batch could not be settled yet", error);
+    }
+  }
+  return outcome;
+}
+
+/** Settle what was sent, without sending anything. Never throws. */
+export async function settleProofs(waitMs = 0): Promise<void> {
+  try {
+    if (waitMs > 0) await sleep(waitMs);
+    await settleBatches();
+  } catch (error) {
+    console.error("Proof batches could not be settled yet", error);
+  }
+}
+
 /**
  * Fingerprint what is new, settle what was sent, and send what is waiting.
  * Called after anything that settles a record, and on request. It never
@@ -462,9 +492,19 @@ export async function getProof(actor: Actor | null, recordId: string): Promise<P
     { label: "The batch's fingerprints hash to the combined fingerprint", passed: batchRoot(hashes) === batch.root },
   ];
   let onChain = false;
+  let current = batch;
   try {
     const result = await verifyNote({ hash: batch.txHash, wallet: getAddress(batch.walletAddress), data });
     onChain = result.ok;
+    // The chain has settled it since it was sent: record that now, rather than wait for the next run.
+    if (result.ok && batch.status === "sent") {
+      const [settled] = await db
+        .update(proofBatches)
+        .set({ status: "confirmed", blockNumber: result.blockNumber, confirmedAt: new Date(), failureReason: null })
+        .where(and(eq(proofBatches.id, batch.id), eq(proofBatches.status, "sent")))
+        .returning();
+      current = settled ?? batch;
+    }
   } catch {
     onChain = false;
   }
@@ -474,16 +514,16 @@ export async function getProof(actor: Actor | null, recordId: string): Promise<P
   });
   return {
     record,
-    state: stateOf(batch),
+    state: stateOf(current),
     batch: {
       root: batch.root,
       txHash: batch.txHash,
-      blockNumber: batch.blockNumber?.toString() ?? null,
+      blockNumber: current.blockNumber?.toString() ?? null,
       walletAddress: batch.walletAddress,
       data,
       hashes,
       position: hashes.indexOf(record.recordHash),
-      confirmedAt: batch.confirmedAt,
+      confirmedAt: current.confirmedAt,
     },
     checks,
     verified: checks.every((check) => check.passed),

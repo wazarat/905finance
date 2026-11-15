@@ -4,7 +4,7 @@ import { refresh } from "next/cache";
 import { after } from "next/server";
 import { failureState, formValues, text, type FormState } from "@/server/form-state";
 import { requireActionWorkspace } from "@/server/page-context";
-import { runProofs } from "@/server/proofs";
+import { runProofsAndSettle } from "@/server/proofs";
 import { decideCase } from "@/server/reputation";
 
 /** A 905 Finance validator's verdict. Who may give it is decided in the data layer, from the verified sign-in. */
@@ -22,7 +22,7 @@ export async function decideCaseAction(_prev: FormState, formData: FormData): Pr
   }
   refresh();
   after(async () => {
-    await runProofs();
+    await runProofsAndSettle();
   });
   return { ok: true, message: "Verdict recorded." };
 }

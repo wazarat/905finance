@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Check, Download, X } from "lucide-react";
+import { Check, Clock, Download, X } from "lucide-react";
 import { PageHeader, Panel } from "@/components/app/page-header";
 import { PageSkeleton } from "@/components/app/page-skeleton";
 import { ChainLink } from "@/components/goat/chain-link";
@@ -69,7 +69,13 @@ async function ProofContent({ params }: { params: Promise<{ id: string }> }) {
 
       {batch ? (
         <Panel
-          title={proof.verified ? "Checked just now: it holds" : "Checked just now: not proven"}
+          title={
+            proof.verified
+              ? "Checked just now: it holds"
+              : proof.state === "sent" && proof.checks.slice(0, 3).every((check) => check.passed)
+                ? "Sent, and waiting for the chain to settle it"
+                : "Checked just now: not proven"
+          }
           description="Every step below was done again as this page loaded, against the chain itself."
         >
           <ul className="space-y-2.5">
@@ -77,12 +83,16 @@ async function ProofContent({ params }: { params: Promise<{ id: string }> }) {
               <li key={check.label} className="flex items-start gap-2.5 text-sm">
                 {check.passed ? (
                   <Check className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden="true" />
+                ) : proof.state === "sent" ? (
+                  <Clock className="mt-0.5 size-4 shrink-0 text-warn" aria-hidden="true" />
                 ) : (
                   <X className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden="true" />
                 )}
-                <span className={check.passed ? "text-ink-soft" : "text-destructive"}>
+                <span className={check.passed ? "text-ink-soft" : proof.state === "sent" ? "text-warn" : "text-destructive"}>
                   {check.label}
-                  <span className="sr-only">{check.passed ? " (passed)" : " (failed)"}</span>
+                  <span className="sr-only">
+                    {check.passed ? " (passed)" : proof.state === "sent" ? " (not yet)" : " (failed)"}
+                  </span>
                 </span>
               </li>
             ))}

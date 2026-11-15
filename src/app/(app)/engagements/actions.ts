@@ -24,7 +24,7 @@ import {
 } from "@/server/form-state";
 import { checkFundReturn, completeEngagement, returnUnusedFunds } from "@/server/closure";
 import { requireActionWorkspace } from "@/server/page-context";
-import { runProofs } from "@/server/proofs";
+import { runProofsAndSettle } from "@/server/proofs";
 import { checkRatingOnChain, rateEngagement, reportProblem } from "@/server/reputation";
 
 /**
@@ -33,7 +33,7 @@ import { checkRatingOnChain, rateEngagement, reportProblem } from "@/server/repu
  */
 function proveAfterwards(): void {
   after(async () => {
-    await runProofs();
+    await runProofsAndSettle();
   });
 }
 
