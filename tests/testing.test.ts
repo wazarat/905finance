@@ -1418,3 +1418,26 @@ describe("real execution", () => {
     expect(reentrancy!.location).toContain("src/Vault.sol");
   });
 });
+
+describe("what a finished run is called", () => {
+  it("calls a test run passed or failed, and a look that lists findings by what it found", async () => {
+    const { isFindingsReport, outcomeLabel } = await import("@/lib/testing");
+    // Tests pass or fail.
+    expect(outcomeLabel("passed", "vitest")).toBe("Passed");
+    expect(outcomeLabel("failed", "forge", 3)).toBe("Failed");
+    // A look that found something did not fail: it is named by its findings.
+    for (const tool of ["webcheck", "chaincheck", "eslint", "solhint", "slither"]) {
+      expect(isFindingsReport(tool)).toBe(true);
+      expect(outcomeLabel("failed", tool, 2)).toBe("2 findings");
+      expect(outcomeLabel("failed", tool, 1)).toBe("1 finding");
+      expect(outcomeLabel("passed", tool, 0)).toBe("Nothing found");
+      expect(outcomeLabel("failed", tool)).toBe("Findings reported");
+      expect(outcomeLabel("passed", tool)).toBe("No serious findings");
+      // A look that could not run is still said to have not run.
+      expect(outcomeLabel("error", tool, 0)).toBe("Could not run");
+    }
+    expect(isFindingsReport("vitest")).toBe(false);
+    expect(isFindingsReport(null)).toBe(false);
+    expect(isFindingsReport("constructor")).toBe(false);
+  });
+});

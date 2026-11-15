@@ -276,7 +276,12 @@ async function BuyerDashboardContent() {
                         {job.result ? job.result.summary : job.projectName}
                       </span>
                     </span>
-                    <JobBadge status={job.status} outcome={job.result?.outcome} />
+                    <JobBadge
+                      status={job.status}
+                      outcome={job.result?.outcome}
+                      tool={job.result?.tool}
+                      findings={job.findingsTotal}
+                    />
                   </Link>
                 </li>
               ))}

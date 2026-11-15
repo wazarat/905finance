@@ -1,3 +1,4 @@
+import { isFindingsReport } from "@/lib/testing";
 import { assetLabel } from "@/lib/units";
 import { NextResponse, type NextRequest } from "next/server";
 import { getActor } from "@/server/auth/actor";
@@ -29,6 +30,13 @@ export async function GET(_request: NextRequest, context: RouteContext<"/reports
       result: report.result
         ? {
             outcome: report.result.outcome,
+            // For a look that lists findings, "failed" is the stored word for "it found something".
+            meaning:
+              report.result.outcome !== "error" && isFindingsReport(report.result.tool)
+                ? "The look ran to completion. It reports findings rather than tests that pass or fail."
+                : report.result.outcome === "error"
+                  ? "The run could not complete."
+                  : "The tests ran to completion.",
             testsExecuted: report.result.testsTotal,
             passed: report.result.testsPassed,
             failed: report.result.testsFailed,

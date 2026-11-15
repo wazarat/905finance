@@ -382,7 +382,7 @@ function PurchaseRow({ purchase, canOperate }: { purchase: PurchaseLine; canOper
         </div>
       ) : purchase.job ? (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-0.5">
-          <JobBadge status={purchase.job.status} outcome={purchase.job.outcome} />
+          <JobBadge status={purchase.job.status} outcome={purchase.job.outcome} tool={purchase.job.tool} />
           <span className="text-sm text-ink-soft">
             {purchase.job.summary ??
               (purchase.job.status === "running"

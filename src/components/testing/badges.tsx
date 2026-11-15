@@ -1,5 +1,13 @@
 import type { TestingJobStatus, TestingOutcome } from "@/db/schema";
-import { JOB_STATUS_LABELS, OUTCOME_LABELS, SEVERITIES, SEVERITY_LABELS, type Severity } from "@/lib/testing";
+import {
+  JOB_STATUS_LABELS,
+  OUTCOME_LABELS,
+  SEVERITIES,
+  SEVERITY_LABELS,
+  isFindingsReport,
+  outcomeLabel,
+  type Severity,
+} from "@/lib/testing";
 import { cn } from "@/lib/utils";
 import { READING_STATE_LABELS, WATCH_STATUS_LABELS, type ReadingState, type WatchStatus } from "@/lib/watch";
 
@@ -16,7 +24,18 @@ const INFO = "border-info/30 bg-info-dim text-info";
  * Where a job stands. Once it has a report, the badge says what the tests
  * found rather than merely that the job finished.
  */
-export function JobBadge({ status, outcome }: { status: TestingJobStatus; outcome?: TestingOutcome | null }) {
+export function JobBadge({
+  status,
+  outcome,
+  tool,
+  findings,
+}: {
+  status: TestingJobStatus;
+  outcome?: TestingOutcome | null;
+  /** The tool that reported, when known: a look that lists findings is named by what it found. */
+  tool?: string | null;
+  findings?: number;
+}) {
   if (status === "queued") return <span className={cn(pill, NEUTRAL)}>{JOB_STATUS_LABELS.queued}</span>;
   if (status === "running") {
     return (
@@ -28,6 +47,10 @@ export function JobBadge({ status, outcome }: { status: TestingJobStatus; outcom
   }
   if (status === "failed" || outcome === "error" || !outcome) {
     return <span className={cn(pill, WARN)}>{JOB_STATUS_LABELS.failed}</span>;
+  }
+  if (isFindingsReport(tool)) {
+    // The look ran and reported. Amber means it found something worth reading, not that anything broke.
+    return <span className={cn(pill, outcome === "passed" ? GOOD : WARN)}>{outcomeLabel(outcome, tool, findings)}</span>;
   }
   return <span className={cn(pill, outcome === "passed" ? GOOD : BAD)}>{OUTCOME_LABELS[outcome]}</span>;
 }

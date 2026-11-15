@@ -8,7 +8,7 @@ import { PageSkeleton } from "@/components/app/page-skeleton";
 import { CaseStatusBadge, Stars } from "@/components/reputation/stars";
 import { SeverityBadge } from "@/components/testing/badges";
 import { capabilityLabel } from "@/lib/capabilities";
-import { JOB_STATUS_LABELS, OUTCOME_LABELS, toolLabel, type Severity } from "@/lib/testing";
+import { JOB_STATUS_LABELS, OUTCOME_LABELS, outcomeLabel, toolLabel, type Severity } from "@/lib/testing";
 import { isAppError } from "@/server/errors";
 import { requireWorkspace } from "@/server/page-context";
 import { getCaseForOperator, type CaseDetail } from "@/server/reputation";
@@ -86,7 +86,7 @@ async function CaseContent({ params }: { params: Promise<{ id: string }> }) {
                   <span className="font-normal text-muted-foreground">
                     {" · "}
                     {job.outcome
-                      ? `${OUTCOME_LABELS[job.outcome as keyof typeof OUTCOME_LABELS] ?? job.outcome}, ${toolLabel(job.tool ?? "")}`
+                      ? `${Object.hasOwn(OUTCOME_LABELS, job.outcome) ? outcomeLabel(job.outcome as keyof typeof OUTCOME_LABELS, job.tool) : job.outcome}, ${toolLabel(job.tool ?? "")}`
                       : (JOB_STATUS_LABELS[job.status as keyof typeof JOB_STATUS_LABELS] ?? job.status)}
                   </span>
                 </p>

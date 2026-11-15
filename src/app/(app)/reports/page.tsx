@@ -99,7 +99,12 @@ async function ReportsContent() {
                       Reading {job.watch.reading + 1} of {job.watch.readingsPlanned}
                     </Link>
                   ) : null}
-                  <JobBadge status={job.status} outcome={job.result?.outcome} />
+                  <JobBadge
+                    status={job.status}
+                    outcome={job.result?.outcome}
+                    tool={job.result?.tool}
+                    findings={job.findingsTotal}
+                  />
                 </div>
                 <p className="text-sm text-ink-soft">
                   {job.result

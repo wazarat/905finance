@@ -69,6 +69,22 @@ export const OUTCOME_LABELS = {
   error: "Could not run",
 } as const;
 
+/** True for a report that is a list of findings rather than tests that pass or fail. */
+export function isFindingsReport(tool: string | null | undefined): boolean {
+  return typeof tool === "string" && Object.hasOwn(FINDINGS_ONLY, tool);
+}
+
+/**
+ * What a completed run is called. A test run passes or fails. A look that
+ * reports findings did its job either way, so it is named by what it found:
+ * calling it "failed" would read as the look itself having broken.
+ */
+export function outcomeLabel(outcome: keyof typeof OUTCOME_LABELS, tool?: string | null, findings?: number): string {
+  if (outcome === "error" || !isFindingsReport(tool)) return OUTCOME_LABELS[outcome];
+  if (findings !== undefined) return findings === 0 ? "Nothing found" : `${findings} ${findings === 1 ? "finding" : "findings"}`;
+  return outcome === "failed" ? "Findings reported" : "No serious findings";
+}
+
 export type ResultFigures = {
   outcome: "passed" | "failed" | "error";
   tool: string;

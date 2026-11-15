@@ -50,6 +50,8 @@ export type PurchaseLine = {
     id: string;
     status: TestingJobStatus;
     outcome: TestingOutcome | null;
+    /** The tool that reported, once one has. */
+    tool: string | null;
     /** What the tool reported, or why the test did not run. Null while it is waiting. */
     summary: string | null;
   } | null;
@@ -239,6 +241,7 @@ export async function getEngagementActivity(
             id: job.id,
             status: job.status,
             outcome: result?.outcome ?? null,
+            tool: result?.tool ?? null,
             // Findings are not loaded here; the summary of a static-analysis run comes from the stored delivery.
             summary:
               result && (result.testsTotal !== null || result.outcome === "error")

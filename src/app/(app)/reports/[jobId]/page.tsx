@@ -12,7 +12,7 @@ import { JobBadge, SeverityBadge, SeverityTally } from "@/components/testing/bad
 import { CodeExcerpt } from "@/components/testing/code-excerpt";
 import { Button } from "@/components/ui/button";
 import { capabilityLabel, railLabel } from "@/lib/capabilities";
-import { FINDING_CATEGORY_LABELS, JOB_STATUS_LABELS, formatDuration, toolLabel } from "@/lib/testing";
+import { FINDING_CATEGORY_LABELS, JOB_STATUS_LABELS, formatDuration, isFindingsReport, toolLabel } from "@/lib/testing";
 import { formatUnits } from "@/lib/units";
 import { roleHasPermission } from "@/server/authz";
 import { isAppError } from "@/server/errors";
@@ -71,6 +71,7 @@ async function ReportContent({ params }: { params: Promise<{ jobId: string }> })
   const reportProof = (await listProofs(actor, workspace.organization.id, "report", [report.id])).get(report.id);
   const pending = report.status === "queued" || report.status === "running";
   const hasCounts = result !== null && result.testsTotal !== null;
+  const findingsReport = result !== null && result.outcome !== "error" && isFindingsReport(result.tool);
 
   return (
     <div className="space-y-8">
@@ -94,7 +95,12 @@ async function ReportContent({ params }: { params: Promise<{ jobId: string }> })
         actions={
           <>
             <span className="self-center">
-              <JobBadge status={report.status} outcome={result?.outcome} />
+              <JobBadge
+                status={report.status}
+                outcome={result?.outcome}
+                tool={result?.tool}
+                findings={report.findingsTotal}
+              />
             </span>
             {result ? (
               <Button asChild variant="outline" size="lg" className="h-10 px-4">
@@ -133,7 +139,33 @@ async function ReportContent({ params }: { params: Promise<{ jobId: string }> })
         </div>
       ) : null}
 
-      {result ? (
+      {result && findingsReport ? (
+        <section aria-label="What was found" className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <Count label="Findings" value={report.findingsTotal} />
+          <Count
+            label="Medium or above"
+            value={report.findingCounts.critical + report.findingCounts.high + report.findingCounts.medium}
+            tone={
+              report.findingCounts.critical + report.findingCounts.high > 0
+                ? "text-destructive"
+                : report.findingCounts.medium > 0
+                  ? "text-warn"
+                  : "text-foreground"
+            }
+          />
+          <Count label="Low or informational" value={report.findingCounts.low + report.findingCounts.info} />
+          <div className="rounded-xl border border-border bg-card p-5">
+            <p className="eyebrow">Duration</p>
+            <p className="figure mt-3 text-3xl whitespace-nowrap text-foreground">
+              {formatDuration(result.durationMs)}
+            </p>
+          </div>
+          <p className="text-xs leading-relaxed text-muted-foreground col-span-2 lg:col-span-4">
+            {toolLabel(result.tool)} ran to completion. This kind of look reports what it finds rather than tests
+            that pass or fail, so findings here mean it did its job.
+          </p>
+        </section>
+      ) : result ? (
         <section aria-label="Test counts" className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <Count label="Tests executed" value={result.testsTotal} />
           <Count label="Passed" value={result.testsPassed} tone="text-brand" />
