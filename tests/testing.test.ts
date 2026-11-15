@@ -398,7 +398,8 @@ describe("a shared repository", () => {
     const id = await engage(acme, relay, elsewhere.id);
     const result = await scan(id);
     expect(result.run.purchasesCompleted).toBe(0);
-    expect(result.run.summary).toContain("Only a public GitHub repository");
+    // An address that is not GitHub's is not a repository this can read, so the project shares nothing to scan.
+    expect(result.run.summary).toContain("shares no JavaScript or TypeScript");
     expect(asked).toBe(0);
 
     expect(parseGitHubRepository("https://github.com/Example-Org/payments.api.git")).toEqual({ owner: "Example-Org", repo: "payments.api" });
@@ -1010,10 +1011,11 @@ describe("the worker is kept away from credentials", () => {
       "@typescript-eslint/parser",
       "eslint",
       "eslint-plugin-security",
+      "solhint",
       "typescript",
       "vitest",
     ]);
-    for (const file of ["main", "job", "exec", "plans", "tools", "workspace", "runners/vitest", "runners/forge", "runners/slither", "runners/eslint-security", "repository"]) {
+    for (const file of ["main", "job", "exec", "plans", "tools", "workspace", "runners/vitest", "runners/forge", "runners/slither", "runners/eslint-security", "runners/solhint", "runners/webcheck", "runners/chaincheck", "repository", "safe-http"]) {
       const source = await readFile(`worker/src/${file}.mjs`, "utf8");
       const imports = [...source.matchAll(/from\s+"([^"]+)"/g)].map((match) => match[1]);
       for (const specifier of imports) {
@@ -1314,7 +1316,7 @@ describe("real execution", () => {
 
     await submitTestingResult(claimed.id, { workerId: "real-worker", result });
     const report = await getTestingReport(acme.owner, claimed.id);
-    expect(report.repository).toEqual({ owner: "example", repo: "payments-api" });
+    expect(report.source).toEqual({ kind: "github", owner: "example", repo: "payments-api" });
     expect(report.findings[0].code!.lines.join("\n")).toContain("eval(input)");
     expect((await purchaseById(report.purchaseId)).status).toBe("delivered");
   });

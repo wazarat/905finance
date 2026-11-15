@@ -23,6 +23,7 @@ const KINDS: Record<string, string> = {
   return: "Return of unused funds",
   rating: "Rating",
   verdict: "Verdict",
+  report: "Test report",
 };
 
 function pretty(document: string): string {

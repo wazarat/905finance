@@ -110,6 +110,7 @@ const SAMPLE_SELLERS: SampleSeller[] = [
       "foundry_fuzz",
       "invariant_testing",
       "slither_static_analysis",
+      "solidity_review",
       "unit_testing",
     ],
     intendedRails: ["goat"],
@@ -147,13 +148,71 @@ const SAMPLE_SELLERS: SampleSeller[] = [
         priceMinor: 2500,
         requiresWeb3: true,
       },
+      {
+        name: "Solidity pattern review",
+        description: "A first read of your own Solidity, from a repository or shared files, without compiling or running it.",
+        capability: "solidity_review",
+        billingUnit: "per_run",
+        priceMinor: 900,
+        requiresWeb3: true,
+      },
+    ],
+  },
+  {
+    slug: "harbor-web",
+    organizationName: "Harbor Web",
+    displayName: "Harbor Web",
+    tagline: "A first look at a website's security settings, as a visitor's browser sees them.",
+    description:
+      "Harbor Web is a website agent operated by 905 Finance. Given a site's address it opens the page the way a browser would and reports what the site tells visitors about its own security: whether it insists on HTTPS, which protective headers it sends, how its cookies are set, and what it loads from elsewhere.\n\nIt is passive. It makes a handful of ordinary page requests, submits nothing, and does not probe for weaknesses. Every finding quotes what the site sent.",
+    capabilities: ["website_check"],
+    intendedRails: ["goat"],
+    endpoint: { url: "https://harbor-web.sample.invalid/agent", protocol: "https_json" },
+    offerings: [
+      {
+        name: "Website first look",
+        description: "A passive check of one website address: HTTPS, security headers, cookies and what the page loads.",
+        capability: "website_check",
+        billingUnit: "per_run",
+        priceMinor: 600,
+        requiresWeb3: false,
+      },
+    ],
+  },
+  {
+    slug: "chainsight",
+    organizationName: "Chainsight",
+    displayName: "Chainsight",
+    tagline: "A first look at deployed contracts on GOAT Testnet3, read from the chain.",
+    description:
+      "Chainsight is a Web3 agent operated by 905 Finance. Given contract addresses on GOAT Testnet3 it reads what the chain and its explorer say about each one: whether there is a contract there at all, whether its logic can be replaced and by whom, whether its source is published, and what a first read of that source shows.\n\nIt only reads. Nothing is sent to any address, and every finding states where it was read from.",
+    capabilities: ["contract_check", "solidity_review"],
+    intendedRails: ["goat"],
+    endpoint: { url: "https://chainsight.sample.invalid/agent", protocol: "https_json" },
+    offerings: [
+      {
+        name: "Contract first look",
+        description: "Reads up to ten addresses on GOAT Testnet3: upgrade control, ownership, published source, and a first read of it.",
+        capability: "contract_check",
+        billingUnit: "per_run",
+        priceMinor: 800,
+        requiresWeb3: true,
+      },
+      {
+        name: "Solidity pattern review",
+        description: "A first read of your own Solidity, from a repository or shared files, without compiling or running it.",
+        capability: "solidity_review",
+        billingUnit: "per_run",
+        priceMinor: 900,
+        requiresWeb3: true,
+      },
     ],
   },
 ];
 
 async function main() {
   // `--deploy` is used by the build. It runs only for a Vercel production
-  // deployment with a database, and keeps the platform's own two listings in
+  // deployment with a database, and keeps the platform's own listings in
   // step with this file. It never touches anybody else's listing.
   const deploy = process.argv.includes("--deploy");
   const url = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
@@ -192,7 +251,7 @@ async function main() {
         )[0];
 
       for (const sample of SAMPLE_SELLERS) {
-        // These two listings are the platform's own and are kept in step with
+        // These listings are the platform's own and are kept in step with
         // this file. A listing with the same address that is not the
         // platform's is somebody else's and is left alone.
         const [existing] = await tx

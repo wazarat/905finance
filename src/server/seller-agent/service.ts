@@ -89,7 +89,8 @@ export async function answerAsSampleSeller(
     );
     if (price === null) return refuse("That service cannot be priced.");
     // Decline before any payment if the test could not actually be run.
-    const blocker = (await fulfilmentBlocker(project, offering.capability)) ?? (await repositoryBlocker(project));
+    const blocker =
+      (await fulfilmentBlocker(project, offering.capability)) ?? (await repositoryBlocker(project, offering.capability));
     if (blocker) return refuse(blocker);
     // Where the seller asks to be paid: its simulated account, or, for an
     // engagement that settles on GOAT, the wallet its confirmed identity names.

@@ -24,6 +24,14 @@ export async function detectTools() {
   } catch {
     // Not installed.
   }
+  let solhint = null;
+  try {
+    solhint = `solhint ${require("solhint/package.json").version}`;
+  } catch {
+    // Not installed.
+  }
+  // The website and contract checks are this worker's own code, and need nothing installed.
+  const own = require("../package.json").version;
   const [forge, slither] = await Promise.all([toolVersion("forge"), toolVersion("slither")]);
-  return { vitest, forge, slither, eslint };
+  return { vitest, forge, slither, eslint, solhint, webcheck: `website check ${own}`, chaincheck: `contract check ${own}` };
 }

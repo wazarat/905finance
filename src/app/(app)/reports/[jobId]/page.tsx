@@ -17,6 +17,9 @@ import { formatUnits } from "@/lib/units";
 import { roleHasPermission } from "@/server/authz";
 import { isAppError } from "@/server/errors";
 import { requireWorkspace } from "@/server/page-context";
+import { ProofTag } from "@/components/proofs/proof-tag";
+import type { JobSource } from "@/db/schema";
+import { listProofs } from "@/server/proofs";
 import { getTestingReport, type TestingReport } from "@/server/testing/reports";
 
 import { RequeueJobForm } from "./requeue-form";
@@ -31,6 +34,46 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="mt-1 text-sm break-words text-foreground">{children}</dd>
     </div>
+  );
+}
+
+/** What the job looked at: a bundled project, or something the buyer shared. */
+function Subject({ source, fixtureKey }: { source: JobSource | null; fixtureKey: string }) {
+  if (!source) return <>Bundled fixture · {getFixture(fixtureKey)?.label ?? fixtureKey}</>;
+  if (source.kind === "github") {
+    return (
+      <>
+        Shared repository ·{" "}
+        <a
+          href={`https://github.com/${source.owner}/${source.repo}`}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="underline underline-offset-4 hover:text-foreground"
+        >
+          {source.owner}/{source.repo}
+        </a>
+        . Read, never run.
+      </>
+    );
+  }
+  if (source.kind === "files") return <>Shared files. Read, never run.</>;
+  if (source.kind === "website") {
+    return (
+      <>
+        Website · <span className="figure break-all">{source.url}</span>. Looked at as a visitor would; nothing submitted.
+      </>
+    );
+  }
+  return (
+    <>
+      {source.addresses.length} {source.addresses.length === 1 ? "address" : "addresses"} on GOAT Testnet3, read from
+      the chain:{" "}
+      {source.addresses.map((address) => (
+        <span key={address} className="mr-2 inline-block">
+          <ChainLink value={address} short />
+        </span>
+      ))}
+    </>
   );
 }
 
@@ -64,6 +107,7 @@ async function ReportContent({ params }: { params: Promise<{ jobId: string }> })
     throw error;
   }
   const { result, execution } = report;
+  const reportProof = (await listProofs(actor, workspace.organization.id, "report", [report.id])).get(report.id);
   const pending = report.status === "queued" || report.status === "running";
   const hasCounts = result !== null && result.testsTotal !== null;
 
@@ -218,22 +262,7 @@ async function ReportContent({ params }: { params: Promise<{ jobId: string }> })
               {report.projectName}
             </Link>
             <span className="block text-xs text-muted-foreground">
-              {report.repository ? (
-                <>
-                  Shared repository ·{" "}
-                  <a
-                    href={`https://github.com/${report.repository.owner}/${report.repository.repo}`}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    className="underline underline-offset-4 hover:text-foreground"
-                  >
-                    {report.repository.owner}/{report.repository.repo}
-                  </a>
-                  . Read, never run.
-                </>
-              ) : (
-                <>Bundled fixture · {getFixture(report.fixtureKey)?.label ?? report.fixtureKey}</>
-              )}
+              <Subject source={report.source} fixtureKey={report.fixtureKey} />
             </span>
             <span className="figure block text-xs break-all text-muted-foreground">{report.projectId}</span>
           </Fact>
@@ -265,6 +294,11 @@ async function ReportContent({ params }: { params: Promise<{ jobId: string }> })
               <span className="block text-xs text-muted-foreground">{railLabel(report.paymentRail)}</span>
             ) : null}
           </Fact>
+          {reportProof ? (
+            <Fact label="Proof of this report">
+              <ProofTag proof={reportProof} />
+            </Fact>
+          ) : null}
           <Fact label="Requested">{dateTimeFormat.format(report.createdAt)}</Fact>
           {report.finishedAt ? <Fact label="Finished">{dateTimeFormat.format(report.finishedAt)}</Fact> : null}
           {execution ? (

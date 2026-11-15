@@ -1,6 +1,7 @@
 import "server-only";
 import type { DbOrTx } from "@/db/client";
-import type { PaymentRail, Project, SellerProfile, ServiceOffering } from "@/db/schema";
+import type { PaymentRail, SellerProfile, ServiceOffering } from "@/db/schema";
+import type { TestableProject } from "../testing/jobs";
 import { qatomItemFor } from "../qatom/config";
 import { hasUsableQatomConnection } from "../qatom/connection";
 import { QatomSellerTransport } from "../qatom/transport";
@@ -59,7 +60,7 @@ export type SellerTransportContext = {
   seller: Pick<SellerProfile, "id" | "slug" | "displayName" | "isSample">;
   offerings: ServiceOffering[];
   /** The project the engagement is for. */
-  project: Pick<Project, "sourceType" | "fixtureKey" | "repositoryUrl">;
+  project: TestableProject;
   rail: PaymentRail;
   asset: AssetInfo;
   /** The transaction the caller is in, if any, so that lookups here join it rather than wait on it. */

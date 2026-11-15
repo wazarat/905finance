@@ -13,7 +13,7 @@ import {
 import { conflict, notFound } from "./errors";
 import { parseInput, projectInput } from "./validation";
 
-const { projects } = schema;
+const { projectFiles, projects } = schema;
 
 export async function listProjects(actor: Actor | null, organizationId: string): Promise<Project[]> {
   await requirePermission(actor, organizationId, "project.view");
@@ -53,9 +53,10 @@ export async function createProject(
         name: input.name,
         description: input.description,
         sourceType: input.sourceType,
-        repositoryUrl: input.sourceType === "repository" ? input.repositoryUrl : null,
+        repositoryUrl: input.sourceType === "repository" ? input.repositoryUrl || null : null,
         fixtureKey: input.sourceType === "fixture" ? input.fixtureKey : null,
         applicationUrl: input.applicationUrl || null,
+        contractAddresses: input.sourceType === "repository" ? input.contractAddresses : [],
         testingObjectives: input.testingObjectives,
         hasWeb3: input.hasWeb3,
         testingAuthorizedAt: new Date(),
@@ -63,6 +64,16 @@ export async function createProject(
         createdBy: actor.userId,
       })
       .returning();
+    if (input.sourceType === "repository" && input.files.length > 0) {
+      await tx.insert(projectFiles).values(
+        input.files.map((file) => ({
+          projectId: project.id,
+          name: file.name,
+          content: file.content,
+          bytes: Buffer.byteLength(file.content, "utf8"),
+        })),
+      );
+    }
     await recordAudit(
       {
         actorUserId: actor.userId,
@@ -109,4 +120,20 @@ export async function deleteProject(actor: Actor | null, projectId: string): Pro
       tx,
     );
   });
+}
+
+/** The names and sizes of the files shared with a project, for its own organization. Not their contents. */
+export async function listProjectFiles(
+  actor: Actor | null,
+  projectId: string,
+): Promise<Array<{ id: string; name: string; bytes: number }>> {
+  assertAuthenticated(actor);
+  if (!isUuid(projectId)) throw notFound("Project");
+  const [project] = await getDb().select().from(projects).where(eq(projects.id, projectId));
+  await requirePermissionOnRecord(actor, project, "project.view", "Project");
+  return getDb()
+    .select({ id: projectFiles.id, name: projectFiles.name, bytes: projectFiles.bytes })
+    .from(projectFiles)
+    .where(eq(projectFiles.projectId, project.id))
+    .orderBy(projectFiles.name);
 }

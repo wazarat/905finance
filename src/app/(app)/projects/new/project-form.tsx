@@ -1,18 +1,13 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { startTransition, useActionState, useState, type FormEvent } from "react";
 import Link from "next/link";
-import {
-  Field,
-  FieldError,
-  FormMessage,
-  SubmitButton,
-  controlClass,
-} from "@/components/forms/field";
+import { Field, FieldError, FormMessage, controlClass } from "@/components/forms/field";
 import { CapabilityChip } from "@/components/sellers/badges";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PROJECT_FIXTURES, capabilitiesForProject } from "@/lib/capabilities";
+import { FILE_LIMITS, MAX_ADDRESSES, isRepositoryCapability } from "@/lib/repository";
 import { cn } from "@/lib/utils";
 import { initialFormState } from "@/server/form-state";
 import { createProjectAction } from "../actions";
@@ -26,14 +21,25 @@ function str(values: Record<string, string | string[]> | undefined, key: string,
 }
 
 export function ProjectForm() {
-  const [state, action] = useActionState(createProjectAction, initialFormState);
+  const [state, action, pending] = useActionState(createProjectAction, initialFormState);
   const errors = state.fieldErrors ?? {};
   const [sourceType, setSourceType] = useState(str(state.values, "sourceType", "repository"));
   const [web3, setWeb3] = useState(str(state.values, "hasWeb3"));
-  const capabilities = web3 ? capabilitiesForProject(web3 === "yes") : [];
+  const own = sourceType === "repository";
+  // What is shared from a project of your own is read, never run, so only the first looks apply to it.
+  const capabilities = (web3 ? capabilitiesForProject(web3 === "yes") : []).filter(
+    (capability) => !own || isRepositoryCapability(capability.key),
+  );
+
+  // Sent by hand so that a correction leaves the form as it was filled in, chosen files included.
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    startTransition(() => action(data));
+  };
 
   return (
-    <form action={action} className="space-y-10" noValidate>
+    <form action={action} onSubmit={submit} className="space-y-10" noValidate>
       <section className="space-y-6">
         <h2 className="eyebrow">Project</h2>
         <Field id="name" label="Project name" errors={errors.name}>
@@ -71,9 +77,10 @@ export function ProjectForm() {
                 onChange={() => setSourceType("repository")}
                 className="sr-only"
               />
-              <span className="font-medium text-foreground">My repository</span>
+              <span className="font-medium text-foreground">My own project</span>
               <span className="mt-1 text-sm text-muted-foreground">
-                Share a public GitHub repository. It is read for security weaknesses and never run.
+                Share any of a repository, a website, source files or contract addresses. What you share is
+                read, never run.
               </span>
             </label>
             <label className={choiceCard}>
@@ -95,28 +102,69 @@ export function ProjectForm() {
         </fieldset>
 
         {sourceType === "repository" ? (
-          <Field
-            id="repositoryUrl"
-            label="Repository URL"
-            hint="A public GitHub repository, for example https://github.com/your-org/your-repo. Only the security scan runs on your own code: it reads the JavaScript and TypeScript and executes nothing."
-            errors={errors.repositoryUrl}
-          >
-            <Input
+          <>
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              Share at least one of the following. Each one opens up a different first-look report.
+            </p>
+            <Field
               id="repositoryUrl"
-              name="repositoryUrl"
-              type="url"
-              inputMode="url"
-              placeholder="https://github.com/your-org/your-repo"
-              defaultValue={str(state.values, "repositoryUrl")}
-              aria-invalid={Boolean(errors.repositoryUrl)}
-              className="h-10"
-            />
-          </Field>
+              label="GitHub repository"
+              optional
+              hint="A public repository, for example https://github.com/your-org/your-repo. Its JavaScript, TypeScript and Solidity are read; nothing in it is installed, built or run."
+              errors={errors.repositoryUrl}
+            >
+              <Input
+                id="repositoryUrl"
+                name="repositoryUrl"
+                type="url"
+                inputMode="url"
+                placeholder="https://github.com/your-org/your-repo"
+                defaultValue={str(state.values, "repositoryUrl")}
+                aria-invalid={Boolean(errors.repositoryUrl)}
+                className="h-10"
+              />
+            </Field>
+            <Field
+              id="applicationUrl"
+              label="Website"
+              optional
+              hint="Your site's address. A website check opens it the way a visitor's browser would and reports its security settings. It submits nothing and does not probe."
+              errors={errors.applicationUrl}
+            >
+              <Input
+                id="applicationUrl"
+                name="applicationUrl"
+                type="url"
+                inputMode="url"
+                placeholder="https://www.example.com"
+                defaultValue={str(state.values, "applicationUrl")}
+                aria-invalid={Boolean(errors.applicationUrl)}
+                className="h-10"
+              />
+            </Field>
+            <Field
+              id="files"
+              label="Source files"
+              optional
+              hint={`Share certain files instead of a whole repository: JavaScript, TypeScript or Solidity, up to ${FILE_LIMITS.files} files of ${FILE_LIMITS.bytesEach / 1024} KB each, ${FILE_LIMITS.bytesTotal / 1024} KB in all. They are read by the scans you buy and are never run.`}
+              errors={errors.files}
+            >
+              <input
+                id="files"
+                name="files"
+                type="file"
+                multiple
+                accept=".js,.jsx,.mjs,.cjs,.ts,.tsx,.mts,.cts,.sol"
+                aria-invalid={Boolean(errors.files)}
+                className={cn(controlClass, "h-auto py-2 file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-1 file:text-sm file:text-foreground")}
+              />
+            </Field>
+          </>
         ) : (
           <Field
             id="fixtureKey"
             label="Fixture"
-            hint="Fixtures run inside the isolated testing worker, which is switched on in a later release."
+            hint="A bundled project with known defects. Every kind of test can run on it."
             errors={errors.fixtureKey}
           >
             <select
@@ -137,25 +185,6 @@ export function ProjectForm() {
             </select>
           </Field>
         )}
-
-        <Field
-          id="applicationUrl"
-          label="Application URL"
-          optional
-          hint="A running instance to test against, if there is one."
-          errors={errors.applicationUrl}
-        >
-          <Input
-            id="applicationUrl"
-            name="applicationUrl"
-            type="url"
-            inputMode="url"
-            placeholder="https://staging.example.com"
-            defaultValue={str(state.values, "applicationUrl")}
-            aria-invalid={Boolean(errors.applicationUrl)}
-            className="h-10"
-          />
-        </Field>
 
         <Field
           id="testingObjectives"
@@ -199,6 +228,26 @@ export function ProjectForm() {
           <FieldError id="hasWeb3-error" messages={web3 === str(state.values, "hasWeb3") ? errors.hasWeb3 : undefined} />
         </fieldset>
 
+        {web3 === "yes" && sourceType === "repository" ? (
+          <Field
+            id="contractAddresses"
+            label="Contract addresses"
+            optional
+            hint={`Public addresses of your contracts on GOAT Testnet3, one per line, up to ${MAX_ADDRESSES}. A contract check reads what the chain and its explorer say about each one. Never share a private key: nothing here needs one.`}
+            errors={errors.contractAddresses}
+          >
+            <textarea
+              id="contractAddresses"
+              name="contractAddresses"
+              rows={3}
+              placeholder="0x…"
+              defaultValue={str(state.values, "contractAddresses")}
+              aria-invalid={Boolean(errors.contractAddresses)}
+              className={cn(controlClass, "figure h-auto py-2.5")}
+            />
+          </Field>
+        ) : null}
+
         <div className="rounded-xl border border-border bg-card p-5" aria-live="polite">
           <p className="text-sm font-medium text-foreground">Testing available for this project</p>
           {capabilities.length === 0 ? (
@@ -208,9 +257,11 @@ export function ProjectForm() {
           ) : (
             <>
               <p className="mt-1 text-sm text-muted-foreground">
-                {web3 === "yes"
-                  ? "Conventional software testing, plus smart-contract testing."
-                  : "Conventional software testing."}
+                {own
+                  ? "First looks, which read what you share. Tests that run a project's code are for the bundled fixtures."
+                  : web3 === "yes"
+                    ? "Conventional software testing, plus smart-contract testing."
+                    : "Conventional software testing."}
               </p>
               <div className="mt-4 flex flex-wrap gap-1.5">
                 {capabilities.map((capability) => (
@@ -236,8 +287,8 @@ export function ProjectForm() {
             <span className="font-medium text-foreground">
               I am authorized to have this project tested.
             </span>{" "}
-            I own this code and any application URL above, or have the owner's permission for
-            testing, including security testing. Tests are never run against third-party systems
+            I own the code, website and contracts shared above, or have the owner's permission
+            for testing, including security testing. Tests are never run against third-party systems
             without approval.
           </span>
         </label>
@@ -247,9 +298,9 @@ export function ProjectForm() {
       {state.message ? <FormMessage message={state.message} /> : null}
 
       <div className="flex flex-wrap gap-3">
-        <SubmitButton pendingLabel="Creating project…" className="h-11 px-5 text-[0.95rem]">
-          Create project
-        </SubmitButton>
+        <Button type="submit" size="lg" disabled={pending} aria-disabled={pending} className="h-11 px-5 text-[0.95rem]">
+          {pending ? "Creating project…" : "Create project"}
+        </Button>
         <Button asChild variant="ghost" size="lg" className="h-11 px-4">
           <Link href="/projects">Cancel</Link>
         </Button>

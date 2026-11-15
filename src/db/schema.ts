@@ -357,7 +357,10 @@ export const projects = pgTable(
     sourceType: projectSourceType("source_type").notNull(),
     repositoryUrl: text("repository_url"),
     fixtureKey: text("fixture_key"),
+    /** The project's website. For a project of the buyer's own, it can be checked as shared. */
     applicationUrl: text("application_url"),
+    /** Contract or account addresses on GOAT Testnet3 the buyer shared, for a Web3 project. */
+    contractAddresses: text("contract_addresses").array().notNull().default(sql`'{}'::text[]`),
     testingObjectives: text("testing_objectives").notNull().default(""),
     /** Configures which testing capabilities apply. It does not fork the workflow. */
     hasWeb3: boolean("has_web3").notNull(),
@@ -376,9 +379,31 @@ export const projects = pgTable(
     index("projects_org_idx").on(t.organizationId),
     check(
       "projects_source_present",
-      sql`(${t.sourceType} = 'repository' AND ${t.repositoryUrl} IS NOT NULL AND ${t.fixtureKey} IS NULL)
+      // 'repository' is a project of the buyer's own: what it shares (a repository, a
+      // website, files, addresses) is checked by the application, since files live in
+      // their own table. A fixture is a bundled project and nothing else.
+      sql`(${t.sourceType} = 'repository' AND ${t.fixtureKey} IS NULL)
         OR (${t.sourceType} = 'fixture' AND ${t.fixtureKey} IS NOT NULL AND ${t.repositoryUrl} IS NULL)`,
     ),
+  ],
+);
+
+/** Source files a buyer shared with a project, to be read by a scan. Never executed. */
+export const projectFiles = pgTable(
+  "project_files",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    content: text("content").notNull(),
+    bytes: integer("bytes").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique("project_files_name_uq").on(t.projectId, t.name),
+    check("project_files_size", sql`${t.bytes} between 1 and 262144`),
   ],
 );
 
@@ -1176,8 +1201,8 @@ export const testingJobs = pgTable(
     capability: text("capability").notNull(),
     /** A bundled project's key, or "github" for a repository the buyer shared. */
     fixtureKey: text("fixture_key").notNull(),
-    /** The shared repository, by owner and name. Null for a bundled project. */
-    source: jsonb("source").$type<{ kind: "github"; owner: string; repo: string }>(),
+    /** What the buyer shared, for a project of their own. Null for a bundled project. */
+    source: jsonb("source").$type<JobSource>(),
     status: testingJobStatus("status").notNull().default("queued"),
     attempts: integer("attempts").notNull().default(0),
     claimedBy: text("claimed_by"),
@@ -1258,6 +1283,16 @@ export const findings = pgTable(
   },
   (t) => [index("findings_job_idx").on(t.jobId, t.sequence)],
 );
+
+/**
+ * What a job is run on when it is not a bundled project. A repository travels
+ * as an owner and a name; files are attached when a worker claims the job.
+ */
+export type JobSource =
+  | { kind: "github"; owner: string; repo: string }
+  | { kind: "files" }
+  | { kind: "website"; url: string }
+  | { kind: "contracts"; addresses: string[] };
 
 export type FindingCode = {
   file: string;
@@ -1482,7 +1517,7 @@ export const proofRecords = pgTable(
     unique("proof_records_entity_uq").on(t.kind, t.entityId),
     index("proof_records_org_idx").on(t.organizationId, t.sequence),
     index("proof_records_batch_idx").on(t.batchId, t.sequence),
-    check("proof_records_kind", sql`${t.kind} in ('payment', 'funding', 'return', 'rating', 'verdict')`),
+    check("proof_records_kind", sql`${t.kind} in ('payment', 'funding', 'return', 'rating', 'verdict', 'report')`),
   ],
 );
 
@@ -1515,6 +1550,7 @@ export type SellerIdentity = typeof sellerIdentities.$inferSelect;
 export type BuyerIdentity = typeof buyerIdentities.$inferSelect;
 export type EngagementRating = typeof engagementRatings.$inferSelect;
 export type ValidationCase = typeof validationCases.$inferSelect;
+export type ProjectFile = typeof projectFiles.$inferSelect;
 export type ProofRecord = typeof proofRecords.$inferSelect;
 export type ProofBatch = typeof proofBatches.$inferSelect;
 export type FundReturn = typeof fundReturns.$inferSelect;

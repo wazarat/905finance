@@ -8,11 +8,13 @@ import { PageHeader, Panel } from "@/components/app/page-header";
 import { CapabilityChip, Web3Badge } from "@/components/sellers/badges";
 import { Button } from "@/components/ui/button";
 import { capabilitiesForProject, getFixture } from "@/lib/capabilities";
-import { parseGitHubRepository } from "@/lib/repository";
+import { ChainLink } from "@/components/goat/chain-link";
+import { isRepositoryCapability, parseGitHubRepository } from "@/lib/repository";
 import { roleHasPermission } from "@/server/authz";
 import { isAppError } from "@/server/errors";
 import { requireWorkspace } from "@/server/page-context";
-import { getProject } from "@/server/projects";
+import { getProject, listProjectFiles } from "@/server/projects";
+import { targetOf } from "@/server/testing/jobs";
 import { DeleteProjectForm } from "./delete-project-form";
 
 export const metadata: Metadata = { title: "Project" };
@@ -38,8 +40,14 @@ async function ProjectContent({ params }: PageProps<"/projects/[id]">) {
     throw error;
   });
 
-  const capabilities = capabilitiesForProject(project.hasWeb3);
+  const own = project.sourceType !== "fixture";
+  // What is shared from a project of your own is read, never run, so only the first looks apply to it.
+  const applicable = capabilitiesForProject(project.hasWeb3).filter((capability) => !own || isRepositoryCapability(capability.key));
+  const readable = await Promise.all(applicable.map(async (capability) => !own || (await targetOf(project, capability.key)) !== null));
+  const capabilities = applicable.filter((_, index) => readable[index]);
+  const waiting = applicable.filter((_, index) => !readable[index]);
   const fixture = project.fixtureKey ? getFixture(project.fixtureKey) : undefined;
+  const files = project.sourceType === "fixture" ? [] : await listProjectFiles(actor, project.id);
   const canDelete = roleHasPermission(workspace.role, "project.delete");
 
   return (
@@ -72,16 +80,58 @@ async function ProjectContent({ params }: PageProps<"/projects/[id]">) {
               </>
             ) : (
               <>
-                <span className="figure text-[0.8125rem] break-all">{project.repositoryUrl}</span>
+                Your own project
                 <span className="mt-1 block text-muted-foreground">
-                  {parseGitHubRepository(project.repositoryUrl)
-                    ? "A shared repository can be scanned for security weaknesses. It is read, never run; tests that execute code are for the bundled projects."
-                    : "Only a public GitHub repository can be scanned. Nothing can be bought for this address."}
+                  What you share is read, never run. Tests that execute code are for the bundled projects.
                 </span>
               </>
             )}
           </Row>
-          <Row label="Application URL">
+          {project.sourceType !== "fixture" ? (
+            <>
+              <Row label="Repository">
+                {project.repositoryUrl ? (
+                  <>
+                    <span className="figure text-[0.8125rem] break-all">{project.repositoryUrl}</span>
+                    {parseGitHubRepository(project.repositoryUrl) ? null : (
+                      <span className="mt-1 block text-warn">
+                        Only a public GitHub repository can be read. Nothing can be bought for this address.
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">None shared</span>
+                )}
+              </Row>
+              <Row label="Source files">
+                {files.length > 0 ? (
+                  <ul className="space-y-0.5">
+                    {files.map((file) => (
+                      <li key={file.id} className="figure text-[0.8125rem]">
+                        {file.name} <span className="text-muted-foreground">· {Math.ceil(file.bytes / 1024)} KB</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <span className="text-muted-foreground">None shared</span>
+                )}
+              </Row>
+              <Row label="Contract addresses">
+                {project.contractAddresses.length > 0 ? (
+                  <ul className="space-y-0.5">
+                    {project.contractAddresses.map((address) => (
+                      <li key={address} className="text-[0.8125rem]">
+                        <ChainLink value={address} />
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <span className="text-muted-foreground">None shared</span>
+                )}
+              </Row>
+            </>
+          ) : null}
+          <Row label="Website">
             {project.applicationUrl ? (
               <span className="figure text-[0.8125rem]">{project.applicationUrl}</span>
             ) : (
@@ -109,16 +159,32 @@ async function ProjectContent({ params }: PageProps<"/projects/[id]">) {
       <Panel
         title="Testing available for this project"
         description={
-          project.hasWeb3
-            ? "Conventional software testing, plus smart-contract testing."
-            : "Conventional software testing."
+          own
+            ? "First looks, which read what this project shares."
+            : project.hasWeb3
+              ? "Conventional software testing, plus smart-contract testing."
+              : "Conventional software testing."
         }
       >
-        <div className="flex flex-wrap gap-1.5">
-          {capabilities.map((capability) => (
-            <CapabilityChip key={capability.key} capability={capability.key} />
-          ))}
-        </div>
+        {capabilities.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {capabilities.map((capability) => (
+              <CapabilityChip key={capability.key} capability={capability.key} />
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-warn">Nothing this project shares can be read yet.</p>
+        )}
+        {waiting.length > 0 ? (
+          <div className="mt-4">
+            <p className="text-sm text-muted-foreground">Nothing is shared for these yet:</p>
+            <div className="mt-2 flex flex-wrap gap-1.5 opacity-60">
+              {waiting.map((capability) => (
+                <CapabilityChip key={capability.key} capability={capability.key} />
+              ))}
+            </div>
+          </div>
+        ) : null}
         <p className="mt-4 text-sm text-muted-foreground">
           These are the kinds of testing a seller can offer for this project. Choose a seller from
           the marketplace to see services and prices.

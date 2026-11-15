@@ -1,5 +1,9 @@
 import {
-  REPOSITORY_TARGET,
+  FILE_LIMITS,
+  MAX_ADDRESSES,
+  SHARED_CAPABILITIES,
+  extensionOf,
+  fileExtensionsFor,
   isRepositoryCapability,
   parseGitHubRepository,
   type GitHubRepository,
@@ -8,14 +12,15 @@ import "server-only";
 import { and, asc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema, type DbOrTx } from "@/db/client";
-import type { Project, TestingJob } from "@/db/schema";
+import type { JobSource, Project, TestingJob } from "@/db/schema";
+import { isHttpUrl } from "../validation";
 import { getCapability } from "@/lib/capabilities";
 import { CAPABILITY_TOOLS, SEVERITIES, describeResult } from "@/lib/testing";
 import { recordAudit } from "../audit";
 import { assertAuthenticated, requirePermissionOnRecord, type Actor } from "../authz";
 import { conflict, invalid, notFound } from "../errors";
 
-const { testingJobs, testingResults, findings, testingWorkers, purchases, engagements, projects, serviceOfferings, agentMessages } =
+const { testingJobs, testingResults, findings, testingWorkers, purchases, engagements, projects, projectFiles, serviceOfferings, agentMessages } =
   schema;
 
 /**
@@ -68,18 +73,16 @@ export async function workerSupport(
  * nobody pays for a test that would never execute.
  */
 export async function fulfilmentBlocker(
-  project: Pick<Project, "sourceType" | "fixtureKey" | "repositoryUrl">,
+  project: TestableProject,
   capability: string,
   db: DbOrTx = getDb(),
 ): Promise<string | null> {
   const label = getCapability(capability)?.label ?? capability;
-  const target = targetOf(project);
-  if (!target) {
-    return "Only a public GitHub repository can be scanned. Change the project's repository address to one, or use a bundled project.";
+  if (project.sourceType !== "fixture" && !isRepositoryCapability(capability)) {
+    return `"${label}" runs the project's code, which is offered for the bundled projects only. What you share of your own project is read, never run.`;
   }
-  if (target.source && !isRepositoryCapability(capability)) {
-    return `"${label}" runs the project's code, which is offered for the bundled projects only. Your own repository can be scanned without running it.`;
-  }
+  const target = await targetOf(project, capability, db);
+  if (!target) return project.sourceType === "fixture" ? "This project has no bundled fixture." : NOTHING_SHARED[capability];
   const support = await workerSupport(target.key, capability, db);
   if (support === "offline") {
     return "No testing worker is online, so this test cannot be run right now.";
@@ -90,13 +93,54 @@ export async function fulfilmentBlocker(
   return null;
 }
 
-type JobTarget = { key: string; source: { kind: "github"; owner: string; repo: string } | null };
+export type TestableProject = Pick<
+  Project,
+  "id" | "sourceType" | "fixtureKey" | "repositoryUrl" | "applicationUrl" | "contractAddresses"
+>;
 
-/** What a project's tests are run on: a bundled project, or a repository it shares. Null when it is neither. */
-export function targetOf(project: Pick<Project, "sourceType" | "fixtureKey" | "repositoryUrl">): JobTarget | null {
+type JobTarget = { key: string; source: JobSource | null };
+
+/** What a buyer is told when their project shares nothing a test type can read. */
+const NOTHING_SHARED: Record<string, string> = {
+  security_scan:
+    "This project shares no JavaScript or TypeScript to scan. Add a public GitHub repository, or share some source files.",
+  solidity_review:
+    "This project shares no Solidity to review. Add a public GitHub repository, or share some .sol files.",
+  website_check: "This project has no website address to check. Add one to the project.",
+  contract_check: "This project shares no contract addresses to check. Add them to the project.",
+};
+
+/**
+ * What a test would be run on for a project: its bundled fixture, or the
+ * first thing it shares that the test type can read. Null when there is
+ * nothing for that test type.
+ */
+export async function targetOf(
+  project: TestableProject,
+  capability: string,
+  db: DbOrTx = getDb(),
+): Promise<JobTarget | null> {
   if (project.sourceType === "fixture") return project.fixtureKey ? { key: project.fixtureKey, source: null } : null;
-  const repository = parseGitHubRepository(project.repositoryUrl);
-  return repository ? { key: REPOSITORY_TARGET, source: { kind: "github", ...repository } } : null;
+  for (const kind of SHARED_CAPABILITIES[capability] ?? []) {
+    if (kind === "github") {
+      const repository = parseGitHubRepository(project.repositoryUrl);
+      if (repository) return { key: kind, source: { kind, ...repository } };
+    } else if (kind === "files") {
+      const names = await db
+        .select({ name: projectFiles.name })
+        .from(projectFiles)
+        .where(eq(projectFiles.projectId, project.id));
+      const wanted = fileExtensionsFor(capability);
+      if (names.some((file) => wanted.includes(extensionOf(file.name)))) return { key: kind, source: { kind } };
+    } else if (kind === "website") {
+      if (project.applicationUrl && isHttpUrl(project.applicationUrl, { httpsOnly: false })) {
+        return { key: kind, source: { kind, url: project.applicationUrl } };
+      }
+    } else if (project.contractAddresses.length > 0) {
+      return { key: kind, source: { kind, addresses: project.contractAddresses.slice(0, MAX_ADDRESSES) } };
+    }
+  }
+  return null;
 }
 
 export type RepositoryProbe = (repository: GitHubRepository) => Promise<{ exists: boolean | null; languages: string[] | null }>;
@@ -140,7 +184,10 @@ export function setRepositoryProbe(next: RepositoryProbe | undefined): void {
   probe = next ?? askGitHub;
 }
 
-const SCANNED_LANGUAGES = ["JavaScript", "TypeScript"];
+const READ_LANGUAGES: Record<string, { languages: string[]; words: string }> = {
+  security_scan: { languages: ["JavaScript", "TypeScript"], words: "JavaScript or TypeScript, which is what the security scan reads" },
+  solidity_review: { languages: ["Solidity"], words: "Solidity, which is what this review reads" },
+};
 
 /**
  * Why a shared repository cannot be scanned, found out by asking GitHub, or
@@ -149,19 +196,22 @@ const SCANNED_LANGUAGES = ["JavaScript", "TypeScript"];
  * known to be public.
  */
 export async function repositoryBlocker(
-  project: Pick<Project, "sourceType" | "fixtureKey" | "repositoryUrl">,
+  project: TestableProject,
+  capability: string,
+  db: DbOrTx = getDb(),
 ): Promise<string | null> {
-  const target = targetOf(project);
-  if (!target?.source) return null;
+  const target = await targetOf(project, capability, db);
+  if (target?.source?.kind !== "github") return null;
   const { exists, languages } = await probe(target.source);
   if (exists === false) {
-    return "That repository was not found on GitHub, or it is not public. Only public repositories can be scanned.";
+    return "That repository was not found on GitHub, or it is not public. Only public repositories can be read.";
   }
   if (exists === null) {
     return "GitHub could not be reached to confirm the repository is public. Nothing was charged; try again shortly.";
   }
-  if (languages && !languages.some((language) => SCANNED_LANGUAGES.includes(language))) {
-    return "That repository has no JavaScript or TypeScript, which is what the security scan reads.";
+  const read = READ_LANGUAGES[capability];
+  if (read && languages && !languages.some((language) => read.languages.includes(language))) {
+    return `That repository has no ${read.words}.`;
   }
   return null;
 }
@@ -223,8 +273,8 @@ export async function enqueueTestingJob(purchaseId: string): Promise<TestingJob>
     if (!engagement.sellerProfileId || offering.sellerProfileId !== engagement.sellerProfileId) {
       throw conflict("The purchase does not belong to this engagement's seller.");
     }
-    const target = targetOf(project);
-    if (!target || (target.source && !isRepositoryCapability(offering.capability))) {
+    const target = await targetOf(project, offering.capability, tx);
+    if (!target || (project.sourceType !== "fixture" && !isRepositoryCapability(offering.capability))) {
       throw conflict("This test cannot be run on this project.");
     }
 
@@ -261,8 +311,10 @@ export type ClaimedJob = {
   id: string;
   fixtureKey: string;
   capability: string;
-  /** For a shared repository only: its owner and name. The worker builds the address itself. */
-  source?: { kind: "github"; owner: string; repo: string };
+  /** For a buyer's own project: what was shared. A repository is an owner and a name; the worker builds the address. */
+  source?: JobSource;
+  /** For shared files: their names and text. They are data to be read; no worker executes them. */
+  files?: Array<{ name: string; content: string }>;
 };
 
 /** Put a job a worker stopped working on back in the queue, or give up on it after too many tries. */
@@ -332,11 +384,22 @@ export async function claimTestingJob(raw: unknown): Promise<ClaimedJob | null> 
         updatedAt: now,
       })
       .where(eq(testingJobs.id, next.id));
+    let files: Array<{ name: string; content: string }> | undefined;
+    if (next.source?.kind === "files") {
+      const wanted = fileExtensionsFor(next.capability);
+      const shared = await tx
+        .select({ name: projectFiles.name, content: projectFiles.content })
+        .from(projectFiles)
+        .where(eq(projectFiles.projectId, next.projectId))
+        .orderBy(projectFiles.name);
+      files = shared.filter((file) => wanted.includes(extensionOf(file.name))).slice(0, FILE_LIMITS.files);
+    }
     return {
       id: next.id,
       fixtureKey: next.fixtureKey,
       capability: next.capability,
       ...(next.source ? { source: next.source } : {}),
+      ...(files ? { files } : {}),
     };
   });
 }
@@ -369,7 +432,7 @@ const findingInput = z
   .object({
     title: z.string().trim().min(1).max(300),
     severity: z.enum(SEVERITIES),
-    category: z.enum(["test_failure", "static_analysis", "compiler", "security"]),
+    category: z.enum(["test_failure", "static_analysis", "compiler", "security", "configuration", "observation"]),
     location: z.string().max(500).nullish(),
     evidence: z.string().max(20_000).nullish(),
     recommendation: z.string().max(2_000).nullish(),

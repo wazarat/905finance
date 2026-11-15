@@ -4,7 +4,7 @@ import * as schema from "@/db/schema";
 import { capabilitiesForProject } from "@/lib/capabilities";
 import { completeOnboarding } from "@/server/accounts";
 import type { Actor } from "@/server/authz";
-import { createProject, getProject, listProjects } from "@/server/projects";
+import { createProject, getProject, listProjectFiles, listProjects } from "@/server/projects";
 import { createUser, useTestDatabase, validProject } from "./support/db";
 
 let db: Db;
@@ -124,18 +124,108 @@ describe("project creation", () => {
     expect(project.testingAuthorizedBy).toBe(buyer.userId);
   });
 
-  it("is backed by a database constraint requiring exactly one source", async () => {
+  it("is backed by a database constraint keeping a bundled project and your own apart", async () => {
+    const base = {
+      organizationId: org,
+      hasWeb3: false,
+      testingAuthorizedAt: new Date(),
+      testingAuthorizedBy: buyer.userId,
+      createdBy: buyer.userId,
+    };
+    // A project of your own cannot also claim a bundled fixture, and a fixture is never tied to a repository.
+    await expect(
+      db.insert(schema.projects).values({ ...base, name: "Both", sourceType: "repository", fixtureKey: "sample-node-api" }),
+    ).rejects.toThrow();
+    await expect(
+      db.insert(schema.projects).values({ ...base, name: "No fixture", sourceType: "fixture" }),
+    ).rejects.toThrow();
     await expect(
       db.insert(schema.projects).values({
-        organizationId: org,
-        name: "No source",
-        sourceType: "repository",
-        hasWeb3: false,
-        testingAuthorizedAt: new Date(),
-        testingAuthorizedBy: buyer.userId,
-        createdBy: buyer.userId,
+        ...base,
+        name: "Fixture with a repository",
+        sourceType: "fixture",
+        fixtureKey: "sample-node-api",
+        repositoryUrl: "https://github.com/example/x",
       }),
     ).rejects.toThrow();
+  });
+});
+
+describe("sharing your own project", () => {
+  const own = { name: "My app", sourceType: "repository", hasWeb3: true, testingAuthorized: true } as const;
+  const WALLET = "0xbfb60049d5544050f1ec527275a9f35bcdceedd8";
+
+  it("needs at least one thing shared, and any one of them is enough", async () => {
+    const error = await createProject(buyer, org, own).catch((e) => e);
+    expect(error.fieldErrors.repositoryUrl[0]).toContain("Share at least one thing");
+    for (const shared of [
+      { repositoryUrl: "https://github.com/example/app" },
+      { applicationUrl: "https://www.example.com" },
+      { files: [{ name: "token.sol", content: "contract T {}" }] },
+      { contractAddresses: WALLET },
+    ]) {
+      const project = await createProject(buyer, org, { ...own, ...shared });
+      expect(project.sourceType, JSON.stringify(shared)).toBe("repository");
+    }
+  });
+
+  it("stores addresses in their checked form, once each, and refuses anything that is not one", async () => {
+    const project = await createProject(buyer, org, {
+      ...own,
+      contractAddresses: `${WALLET}\n  0x54B8d8E2455946f2A5B8982283f2359812e815ce, ${WALLET.toUpperCase().replace("0X", "0x")}`,
+    });
+    expect(project.contractAddresses).toEqual([
+      "0xbFB60049D5544050F1Ec527275A9F35bCdcEedD8",
+      "0x54B8d8E2455946f2A5B8982283f2359812e815ce",
+    ]);
+    for (const bad of ["0x1234", "not an address", `${WALLET}00`, "0x" + "g".repeat(40)]) {
+      const error = await createProject(buyer, org, { ...own, contractAddresses: bad }).catch((e) => e);
+      expect(error.fieldErrors.contractAddresses, bad).toBeDefined();
+    }
+    const many = Array.from({ length: 11 }, (_, n) => `0x${String(n).padStart(40, "0")}`).join("\n");
+    expect((await createProject(buyer, org, { ...own, contractAddresses: many }).catch((e) => e)).fieldErrors.contractAddresses).toBeDefined();
+    // A bundled project carries none, whatever is sent with it.
+    const fixture = await createProject(buyer, org, { ...validProject, sourceType: "fixture", repositoryUrl: undefined, fixtureKey: "sample-node-api", contractAddresses: WALLET, files: [{ name: "a.ts", content: "x" }] });
+    expect(fixture.contractAddresses).toEqual([]);
+    expect(await listProjectFiles(buyer, fixture.id)).toEqual([]);
+  });
+
+  it("takes source files as text to read, within limits, and nothing else", async () => {
+    const project = await createProject(buyer, org, {
+      ...own,
+      files: [
+        { name: "vault.sol", content: "contract Vault {}" },
+        { name: "api.ts", content: "export const a = 1;" },
+      ],
+    });
+    expect(await listProjectFiles(buyer, project.id)).toEqual([
+      { id: expect.any(String), name: "api.ts", bytes: 19 },
+      { id: expect.any(String), name: "vault.sol", bytes: 17 },
+    ]);
+    const refuse = async (files: Array<{ name: string; content: string }>, words: string) => {
+      const error = await createProject(buyer, org, { ...own, files }).catch((e) => e);
+      expect(error.fieldErrors?.files?.[0] ?? error.message, words).toContain(words);
+    };
+    await refuse([{ name: "../../etc/passwd", content: "x" }], "cannot be shared");
+    await refuse([{ name: "run.sh", content: "rm -rf /" }], "cannot be shared");
+    await refuse([{ name: "page.html", content: "<script>" }], "cannot be shared");
+    await refuse([{ name: ".env", content: "SECRET=1" }], "cannot be shared");
+    await refuse([{ name: "a.ts", content: "" }], "is empty");
+    await refuse([{ name: "a.ts", content: "x\u0000y" }], "not a text file");
+    await refuse([{ name: "a.ts", content: "x" }, { name: "A.ts", content: "y" }], "both named");
+    await refuse([{ name: "big.ts", content: "x".repeat(200 * 1024 + 1) }], "larger than 200 KB");
+    await refuse(Array.from({ length: 3 }, (_, n) => ({ name: `f${n}.ts`, content: "x".repeat(190 * 1024) })), "larger than 500 KB");
+    await refuse(Array.from({ length: 21 }, (_, n) => ({ name: `f${n}.ts`, content: "x" })), "at most 20 files");
+  });
+
+  it("shows a project's files to its own organization only", async () => {
+    const project = await createProject(buyer, org, { ...own, files: [{ name: "a.ts", content: "export {};" }] });
+    const outsider = await createUser(db, "outsider");
+    await completeOnboarding(outsider, { displayName: "Out Sider", organizationName: "Elsewhere", accountType: "business", roles: "buyer" });
+    await expect(listProjectFiles(outsider, project.id)).rejects.toMatchObject({ code: "not_found" });
+    await expect(listProjectFiles(null, project.id)).rejects.toMatchObject({ code: "unauthenticated" });
+    // What is listed is a name and a size. The text is only ever handed to a worker that has the job.
+    expect(JSON.stringify(await listProjectFiles(buyer, project.id))).not.toContain("export");
   });
 });
 

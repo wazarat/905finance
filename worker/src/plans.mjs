@@ -6,8 +6,8 @@
  * cannot ask the worker to run anything that is not listed here.
  */
 
-/** @typedef {"vitest" | "forge" | "slither"} Tool */
-/** @typedef {{ tool: Tool, runner: "vitest" | "forge-build" | "forge-test" | "slither", target?: string, timeoutMs: number }} Plan */
+/** @typedef {"vitest" | "forge" | "slither" | "eslint" | "solhint" | "webcheck" | "chaincheck"} Tool */
+/** @typedef {{ tool: string, runner: string, target?: string, timeoutMs: number }} Plan */
 
 /** @type {Record<string, Record<string, Plan>>} */
 export const PLANS = {
@@ -26,19 +26,34 @@ export const PLANS = {
   },
 };
 
-/** @returns {Plan | null} */
 /**
- * What may be done to a repository someone shared. Only tools that read code
- * are here: nothing in a shared repository is ever installed, built or run.
+ * What may be done to things a buyer shared from a project of their own. Every
+ * tool here only reads: nothing shared is ever installed, built or run.
  */
-export const REPOSITORY = "github";
-export const REPOSITORY_PLANS = {
-  security_scan: { tool: "eslint", runner: "eslint-security", target: ".", timeoutMs: 240_000 },
+export const SHARED_PLANS = {
+  github: {
+    security_scan: { tool: "eslint", runner: "eslint-security", target: ".", timeoutMs: 240_000 },
+    solidity_review: { tool: "solhint", runner: "solhint", target: ".", timeoutMs: 180_000 },
+  },
+  files: {
+    security_scan: { tool: "eslint", runner: "eslint-security", target: ".", timeoutMs: 120_000 },
+    solidity_review: { tool: "solhint", runner: "solhint", target: ".", timeoutMs: 120_000 },
+  },
+  website: {
+    website_check: { tool: "webcheck", runner: "webcheck", timeoutMs: 90_000 },
+  },
+  contracts: {
+    contract_check: { tool: "chaincheck", runner: "chaincheck", timeoutMs: 180_000 },
+  },
 };
 
+export const isShared = (key) => Object.hasOwn(SHARED_PLANS, key);
+
+/** @returns {Plan | null} */
 export function planFor(fixtureKey, capability) {
-  if (fixtureKey === REPOSITORY) {
-    return Object.hasOwn(REPOSITORY_PLANS, capability) ? REPOSITORY_PLANS[capability] : null;
+  if (isShared(fixtureKey)) {
+    const forKind = SHARED_PLANS[fixtureKey];
+    return Object.hasOwn(forKind, capability) ? forKind[capability] : null;
   }
   if (!Object.hasOwn(PLANS, fixtureKey)) return null;
   const forFixture = PLANS[fixtureKey];
@@ -57,8 +72,10 @@ export function supportedPairs(tools) {
       if (tools[plan.tool]) pairs.push(`${fixtureKey}:${capability}`);
     }
   }
-  for (const [capability, plan] of Object.entries(REPOSITORY_PLANS)) {
-    if (tools[plan.tool]) pairs.push(`${REPOSITORY}:${capability}`);
+  for (const [kind, capabilities] of Object.entries(SHARED_PLANS)) {
+    for (const [capability, plan] of Object.entries(capabilities)) {
+      if (tools[plan.tool]) pairs.push(`${kind}:${capability}`);
+    }
   }
   return pairs;
 }

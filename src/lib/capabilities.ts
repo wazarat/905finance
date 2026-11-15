@@ -96,6 +96,27 @@ export const CAPABILITIES = [
     domain: "software_testing",
     web3: true,
   },
+  {
+    key: "solidity_review",
+    label: "Solidity pattern review",
+    description: "A first read of Solidity source for risky constructs, without compiling it.",
+    domain: "software_testing",
+    web3: true,
+  },
+  {
+    key: "contract_check",
+    label: "Contract first look",
+    description: "What the chain and its explorer say about a deployed contract: who can change it, and whether its source is published.",
+    domain: "software_testing",
+    web3: true,
+  },
+  {
+    key: "website_check",
+    label: "Website first look",
+    description: "A passive check of a website's security settings, as a visitor's browser sees them.",
+    domain: "software_testing",
+    web3: false,
+  },
 ] as const satisfies readonly Capability[];
 
 export type CapabilityKey = (typeof CAPABILITIES)[number]["key"];

@@ -1,3 +1,6 @@
+import { getAddress } from "viem";
+import { isEvmAddress } from "@/lib/goat";
+import { FILE_LIMITS, MAX_ADDRESSES, isSharedFileName } from "@/lib/repository";
 import { z } from "zod";
 import {
   CAPABILITY_KEYS,
@@ -9,7 +12,7 @@ import {
 import { billingUnit, endpointProtocol } from "@/db/schema";
 import { invalid, type FieldErrors } from "./errors";
 
-function isHttpUrl(value: string, { httpsOnly }: { httpsOnly: boolean }): boolean {
+export function isHttpUrl(value: string, { httpsOnly }: { httpsOnly: boolean }): boolean {
   try {
     const url = new URL(value);
     if (url.username || url.password) return false;
@@ -56,6 +59,13 @@ export const projectInput = z
     repositoryUrl: z.string().trim().max(2000).optional(),
     fixtureKey: z.string().trim().optional(),
     applicationUrl: z.string().trim().max(2000).optional(),
+    /** Addresses on GOAT Testnet3, as typed: one per line, or separated by commas or spaces. */
+    contractAddresses: z.string().max(2000).optional(),
+    /** Source files shared with the project. Read by a scan, never executed. */
+    files: z
+      .array(z.object({ name: z.string().max(300), content: z.string().max(FILE_LIMITS.bytesEach * 2) }))
+      .max(FILE_LIMITS.files, `Share at most ${FILE_LIMITS.files} files.`)
+      .optional(),
     testingObjectives: optionalText(2000),
     // Both are checked in the refinement below so every problem is reported at once.
     hasWeb3: z.unknown(),
@@ -70,11 +80,32 @@ export const projectInput = z
       });
     }
     if (value.sourceType === "repository") {
-      if (!value.repositoryUrl || !isHttpUrl(value.repositoryUrl, { httpsOnly: true })) {
+      if (value.repositoryUrl && !isHttpUrl(value.repositoryUrl, { httpsOnly: true })) {
         ctx.addIssue({
           code: "custom",
           path: ["repositoryUrl"],
-          message: "Enter an https:// repository URL.",
+          message: "Enter an https:// repository URL, or leave this empty.",
+        });
+      }
+      const addresses = splitAddresses(value.contractAddresses);
+      if (addresses.some((address) => !isEvmAddress(address))) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["contractAddresses"],
+          message: "Each address is 0x followed by 40 hexadecimal characters.",
+        });
+      } else if (addresses.length > MAX_ADDRESSES) {
+        ctx.addIssue({ code: "custom", path: ["contractAddresses"], message: `Share at most ${MAX_ADDRESSES} addresses.` });
+      }
+      const files = value.files ?? [];
+      const problem = sharedFilesProblem(files);
+      if (problem) ctx.addIssue({ code: "custom", path: ["files"], message: problem });
+      // A project of your own has to share something that can be looked at.
+      if (!value.repositoryUrl && !value.applicationUrl && files.length === 0 && addresses.length === 0) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["repositoryUrl"],
+          message: "Share at least one thing: a repository, a website, some files, or contract addresses.",
         });
       }
     } else {
@@ -104,7 +135,36 @@ export const projectInput = z
       });
     }
   })
-  .transform((value) => ({ ...value, hasWeb3: value.hasWeb3 === true, testingAuthorized: true as const }));
+  .transform((value) => ({
+    ...value,
+    hasWeb3: value.hasWeb3 === true,
+    testingAuthorized: true as const,
+    contractAddresses: [...new Set(splitAddresses(value.contractAddresses).map((address) => getAddress(address)))],
+    files: value.files ?? [],
+  }));
+
+function splitAddresses(text: string | undefined): string[] {
+  return (text ?? "").split(/[\s,;]+/).filter(Boolean);
+}
+
+/** Why a set of shared files cannot be accepted, or null when it can. */
+function sharedFilesProblem(files: Array<{ name: string; content: string }>): string | null {
+  let total = 0;
+  const seen = new Set<string>();
+  for (const file of files) {
+    if (!isSharedFileName(file.name)) {
+      return `"${file.name.slice(0, 60)}" cannot be shared. Share JavaScript, TypeScript or Solidity source files, with plain names.`;
+    }
+    if (seen.has(file.name.toLowerCase())) return `Two files are both named "${file.name}".`;
+    seen.add(file.name.toLowerCase());
+    const bytes = Buffer.byteLength(file.content, "utf8");
+    if (bytes === 0) return `"${file.name}" is empty.`;
+    if (bytes > FILE_LIMITS.bytesEach) return `"${file.name}" is larger than ${FILE_LIMITS.bytesEach / 1024} KB.`;
+    if (file.content.includes("\u0000")) return `"${file.name}" is not a text file.`;
+    total += bytes;
+  }
+  return total > FILE_LIMITS.bytesTotal ? `Together the files are larger than ${FILE_LIMITS.bytesTotal / 1024} KB.` : null;
+}
 export type ProjectInput = z.infer<typeof projectInput>;
 
 // ---------------------------------------------------------------------------

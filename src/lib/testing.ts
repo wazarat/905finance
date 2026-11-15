@@ -9,6 +9,9 @@ export const TESTING_TOOLS = {
   forge: "Foundry",
   slither: "Slither",
   eslint: "ESLint security rules",
+  solhint: "Solhint",
+  webcheck: "The website check",
+  chaincheck: "The contract check",
 } as const;
 
 export type TestingTool = keyof typeof TESTING_TOOLS;
@@ -19,6 +22,9 @@ export const CAPABILITY_TOOLS: Record<string, TestingTool> = {
   regression_testing: "vitest",
   api_testing: "vitest",
   security_scan: "eslint",
+  solidity_review: "solhint",
+  website_check: "webcheck",
+  contract_check: "chaincheck",
   solidity_compilation: "forge",
   foundry_unit: "forge",
   foundry_fuzz: "forge",
@@ -45,6 +51,8 @@ export const FINDING_CATEGORY_LABELS: Record<string, string> = {
   test_failure: "Failing test",
   static_analysis: "Static analysis",
   security: "Security weakness",
+  configuration: "Website setting",
+  observation: "Read from the chain",
   compiler: "Compiler",
 };
 
@@ -101,8 +109,8 @@ export function describeResult(
     if (result.testsSkipped) parts.push(`${result.testsSkipped} skipped`);
     return `${tool} ran ${plural(result.testsTotal, "test")}: ${parts.join(", ")}.`;
   }
-  if (result.tool === "slither" || result.tool === "eslint") {
-    const subject = result.tool === "slither" ? "the contracts" : "the code";
+  if (Object.hasOwn(FINDINGS_ONLY, result.tool)) {
+    const subject = FINDINGS_ONLY[result.tool];
     return findings.length === 0
       ? `${tool} analysed ${subject} and reported nothing.`
       : `${tool} reported ${plural(findings.length, "finding")}: ${severityBreakdown(findings)}.`;
@@ -111,6 +119,15 @@ export function describeResult(
     ? `${tool} compiled the contracts without errors.`
     : `${tool} could not compile the contracts.`;
 }
+
+/** Tools that report findings and no test counts, with what each one looks at. */
+const FINDINGS_ONLY: Record<string, string> = {
+  slither: "the contracts",
+  eslint: "the code",
+  solhint: "the Solidity",
+  webcheck: "the website",
+  chaincheck: "the addresses",
+};
 
 export function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms} ms`;

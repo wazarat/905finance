@@ -88,7 +88,16 @@ async function main() {
       continue;
     }
 
-    const subject = job.source ? `github.com/${job.source.owner}/${job.source.repo}` : job.fixtureKey;
+    const subject =
+      job.source?.kind === "github"
+        ? `github.com/${job.source.owner}/${job.source.repo}`
+        : job.source?.kind === "website"
+          ? "a website"
+          : job.source?.kind === "contracts"
+            ? `${job.source.addresses?.length ?? 0} addresses`
+            : job.source?.kind === "files"
+              ? `${job.files?.length ?? 0} shared files`
+              : job.fixtureKey;
     console.log(`Job ${job.id}: ${job.capability} on ${subject}`);
     let result;
     try {

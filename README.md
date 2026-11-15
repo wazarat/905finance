@@ -23,6 +23,7 @@ The product was built in seven milestones, one at a time. All seven are built. W
 | 9 | ERC-8004 identity, ratings and validation | **Complete** on the platform; ratings reach GOAT's Reputation Registry once an engagement has a real wallet |
 | 10 | Proof on GOAT for every record | **Live** on GOAT Testnet3 |
 | 11 | Sharing your own code | **Complete**: a public GitHub repository can buy the security scan |
+| 12 | More ways to share, and a first look at each | **Complete**: a website, a few source files or contract addresses, each with its own first-look report |
 
 ### What works today (Milestone 1)
 
@@ -153,6 +154,25 @@ To switch it on, set `GOAT_PROOFS=testnet3` (the Privy credentials must be set t
 - **The job names a repository, not an address.** A worker is told an owner and a name and builds GitHub's address itself, so a job cannot send it anywhere else. Downloads are bounded in size and time; links and special files are stripped from what is unpacked before any tool sees it.
 - **A record of what was read.** The report names the repository and the exact commit, and says how many files were read.
 
+### What works today (Milestone 12)
+
+- **Share what you are willing to share.** A project of your own no longer needs a repository. Share any of a public GitHub repository, a website address, up to 20 source files, or (for a Web3 project) the public addresses of your contracts. At least one is needed; nothing here ever asks for a private key.
+- **A first look at each.** Each thing shared opens up a report that a seller's agent can deliver straight away:
+
+  | First look | Reads | Sold by |
+  |---|---|---|
+  | Security scan | JavaScript and TypeScript, from a repository or shared files | Relay QA |
+  | Solidity pattern review | Solidity, from a repository or shared files, with Solhint's security rules | Ledgerproof, Chainsight |
+  | Website first look | One page of a site, as a visitor's browser receives it: HTTPS, security headers, cookie flags, mixed content, `security.txt` | Harbor Web |
+  | Contract first look | Each address on GOAT Testnet3: whether it is a contract, whether its source is published, whether its logic can be replaced and by whom, and a pattern review of the published source | Chainsight |
+
+- **Read, never run.** Shared files are stored as text and handed only to a worker holding a job that reads them. Nothing shared is installed, built or executed, and a project's own linter settings and disable comments are ignored.
+- **The website check is passive.** A handful of plain GET requests and nothing else: no form is submitted, no address is guessed at, nothing is probed. The worker resolves the site's name itself, refuses any name that leads to a private or local address, connects to exactly the address it checked, and applies the same check to every redirect. A cookie's value is never recorded.
+- **Addresses are parameters, not destinations.** The contract check asks two fixed hosts, GOAT Testnet3's RPC and its explorer. An address a buyer supplies is only ever an argument to them.
+- **Nobody pays for a report that cannot be made.** A seller's agent declines, before any payment, a first look the project shares nothing for, or that no online worker can perform.
+- **A proof for every report.** Each report gets its own fingerprint, covering the outcome and a hash of its findings, written to GOAT with the other records as soon as the worker hands it in. The fingerprint does not contain the shared code.
+- **Two more sellers.** Harbor Web and Chainsight join Relay QA and Ledgerproof. Each serves its own ERC-8004 registration document, is rated and validated like the others, and is paid through the same purchasing path. Linking one to an agent id on GOAT is the same operator step as before (`pnpm seller:identity`).
+
 ### What is not live yet
 
 Everything below is built and tested; none of it has been run against the real service. Each needs something only the operator can do.
@@ -162,16 +182,20 @@ Everything below is built and tested; none of it has been run against the real s
 | Buying a test on the deployed site | Works only while a testing worker is running for it; otherwise sellers decline to quote and no payment is taken. | `WORKER_TOKEN` set on the site, and `pnpm worker:live up` (see [Serving a deployed site](#serving-a-deployed-site)) or the worker image hosted elsewhere |
 | Agent messages over Qatom | Tested against a stand-in built from Qatom's published behaviour | A free catalog item per seller in the Qatom dashboard, `QATOM_FULFILMENT_TOKEN` and `QATOM_SELLER_ITEMS`, and the owner signing in at Qatom from Settings |
 | Real wallets, payments and fund returns on GOAT Testnet3 | Tested against stand-ins for Privy, GOAT Flow and the chain | `PRIVY_APP_SECRET`, an approved GOAT Flow test merchant with a fee balance whose receiving address is the seller's registry wallet, test tokens, and a little test BTC for network fees |
-| A seller other than the two samples answering an agent | Only the sample sellers have a seller-side agent | A third-party seller endpoint that speaks the signed message format |
+| A seller other than the platform's own answering an agent | Only the platform's four sellers have a seller-side agent | A third-party seller endpoint that speaks the signed message format |
 
 Other limits, by design for now:
 
 - The purchasing agent is scripted. There is no language model in the loop; the runtime, tools and policy engine it would sit behind are in place.
-- A buyer's own repository can be scanned, not run. Only JavaScript and TypeScript are read, only from public GitHub repositories, and only the default branch. Tests that execute code run against the two bundled fixtures.
+- What a buyer shares of their own project is read, not run. Repositories must be public, on GitHub, and are read at the default branch. Tests that execute code run against the two bundled fixtures.
+- The Solidity pattern review recognises risky constructs by their shape, without compiling. It is a first look, not an audit: it does not follow value through a contract, and misses, for example, a reentrancy through `call{value: ...}` that Slither finds in the bundled vault.
+- The website first look reads one page and what that page is served with. It does not sign in, crawl or test for injection.
+- Contract addresses are read on GOAT Testnet3 only.
+- A first look is delivered at once. Work that runs over a period and reports back at the end is not built yet.
 - A test that could not run can be re-run free of charge; it is not refunded. A payment to a seller is never reversed by the platform.
 - Listing activation is a command-line step. There is no operator console.
 - GOAT is Testnet3 only. The application refuses any other chain and the production payment API. Assets there have no monetary value.
-- The two seeded sellers, Relay QA and Ledgerproof, are operated by 905 Finance itself. Their agents are answered by the platform, and the tests they sell are executed by the platform's testing worker.
+- The four seeded sellers, Relay QA, Ledgerproof, Harbor Web and Chainsight, are operated by 905 Finance itself. Their agents are answered by the platform, and the tests they sell are executed by the platform's testing worker.
 
 ## Stack
 
@@ -190,7 +214,7 @@ pnpm install
 cp .env.example .env.local   # then fill in the values described below
 pnpm db:up                   # start local Postgres
 pnpm db:migrate              # apply migrations
-pnpm db:seed                 # add the two sample sellers
+pnpm db:seed                 # add the platform's own sellers
 pnpm dev                     # http://localhost:3000
 ```
 
@@ -241,14 +265,14 @@ Starting a second engagement with the other sample seller shows a separate walle
 
 ## The testing worker
 
-Tests are never executed inside the web application. They run in a separate worker (`worker/`), a small Node program with one dependency (Vitest) that knows nothing about the application's code or database.
+Tests are never executed inside the web application. They run in a separate worker (`worker/`), a small Node program with a handful of testing tools as its only dependencies, which knows nothing about the application's code or database.
 
 ```
 buyer's agent ──pays──▶ purchase ──▶ testing job (queued)
                                          │  POST /api/worker/claim      (worker token)
                                          ▼
-                                  testing worker ── runs Vitest / Foundry / Slither
-                                         │           in a private copy of the fixture
+                                  testing worker ── runs Vitest / Foundry / Slither on a private
+                                         │           copy of a fixture, or reads what was shared
                                          │  POST /api/worker/jobs/<id>/result
                                          ▼
                               result + findings stored ──▶ purchase delivered ──▶ report
@@ -257,7 +281,7 @@ buyer's agent ──pays──▶ purchase ──▶ testing job (queued)
 What keeps it contained:
 
 - **It holds one credential**, its own worker token. It is never given the database address, the session secret or any wallet or signing key, and it refuses to start if it finds one in its environment.
-- **A job names what to test and a test type, nothing else.** What to test is a bundled fixture's key, or the owner and name of a public GitHub repository. What is actually executed comes from the worker's own table (`worker/src/plans.mjs`); no command, path or argument ever travels from the application to the worker.
+- **A job names what to test and a test type, nothing else.** What to test is a bundled fixture's key, the owner and name of a public GitHub repository, a website address, a list of contract addresses, or the text of shared files. What is actually executed comes from the worker's own table (`worker/src/plans.mjs`); no command, path or argument ever travels from the application to the worker.
 - **Each job gets a private copy** of the fixture, deleted afterwards, and runs with a scrubbed environment (the worker token is not passed to the tests), a hard time limit and bounded output.
 - **Reports are checked before they are stored.** Counts must add up, a run with failures cannot be reported as passed, and a report must come from the tool the job calls for. A report is text to be read: nothing in it can change a mandate, a budget or an engagement.
 
@@ -586,5 +610,6 @@ The GOAT suite runs against stand-ins for the chain, Privy and GOAT Flow. The ER
 - Proofs: one fingerprint per settled record, with private text left out; nothing sent and no wallet made while switched off; one transaction per batch carrying exactly the combined fingerprint; nothing counted as written until the chain has settled it; a failed, rejected or dropped batch written again; each record in one batch only under simultaneous requests; a proof failing its check when the record, its fingerprint or the transaction is altered; and a proof readable only by the organization whose record it is.
 
 - Shared repositories: a repository's code never being run, with such tests declined before payment; the scan quoted only when GitHub confirms the repository is public and has code to read; a job carrying an owner and a name and no address; names that are not GitHub's refused by the application and again by the worker; links and special files stripped from what is unpacked; and a real scan of a stand-in repository reporting only the project's own code.
+- More ways to share: a project needing at least one of a repository, a website, files or addresses; file names, types and sizes being checked, and addresses stored once in their checked form; each first look sold only for what it reads and declined before payment otherwise; a worker being handed only the files its tool reads; the website check refusing private, local and numeric addresses on the first request and on every redirect, and never recording a cookie's value; the contract check against a stand-in chain for an account, an unpublished contract, an upgradeable one and published source; a project's own Solhint settings and disable comments being ignored; and every report getting a fingerprint fixed to its findings.
 
 The testing suite also **executes the real tools** against the bundled fixtures, through the same worker code and submission path the application uses, and asserts the figures they report (for example, Vitest: 6 tests, 5 passed, 1 failed). The Vitest cases always run; the Foundry and Slither cases run when those tools are on `PATH` and are skipped otherwise.

@@ -14,12 +14,15 @@ import { goatSigner } from "./goat/signer";
 const {
   engagementRatings,
   engagements,
+  findings,
   fundReturns,
   fundingAuthorizations,
   paymentTransactions,
   platformWallets,
   proofBatches,
   proofRecords,
+  testingJobs,
+  testingResults,
   validationCases,
 } = schema;
 
@@ -39,7 +42,7 @@ const {
  * freely, and a batch that fails just releases its records to the next one.
  */
 
-export const PROOF_KINDS = ["payment", "funding", "return", "rating", "verdict"] as const;
+export const PROOF_KINDS = ["payment", "funding", "return", "rating", "verdict", "report"] as const;
 export type ProofKind = (typeof PROOF_KINDS)[number];
 
 /** The four bytes that begin every proof transaction's data: the text "905f". */
@@ -219,6 +222,43 @@ export async function syncProofRecords(): Promise<number> {
         verdict: decided.status,
         score: decided.score,
         at: decided.decidedAt?.toISOString() ?? null,
+      }),
+    });
+  }
+
+  const reports = await db
+    .select({ result: testingResults, job: testingJobs, organizationId: engagements.organizationId })
+    .from(testingResults)
+    .innerJoin(testingJobs, eq(testingJobs.id, testingResults.jobId))
+    .innerJoin(engagements, eq(engagements.id, testingJobs.engagementId))
+    .where(missing("report", testingResults.jobId))
+    .orderBy(testingResults.createdAt)
+    .limit(BATCH_SIZE);
+  for (const { result, job, organizationId } of reports) {
+    const found = await db
+      .select({ title: findings.title, severity: findings.severity, location: findings.location })
+      .from(findings)
+      .where(eq(findings.jobId, job.id))
+      .orderBy(findings.sequence);
+    drafts.push({
+      organizationId,
+      engagementId: job.engagementId,
+      kind: "report",
+      entityId: job.id,
+      // The findings are fixed by their own hash, so the report cannot be reworded afterwards.
+      document: JSON.stringify({
+        type: "905finance.report.v1",
+        id: job.id,
+        engagement: job.engagementId,
+        seller: job.sellerProfileId,
+        work: job.capability,
+        tool: result.tool,
+        toolVersion: result.toolVersion,
+        outcome: result.outcome,
+        tests: result.testsTotal === null ? null : { total: result.testsTotal, passed: result.testsPassed, failed: result.testsFailed },
+        findings: found.length,
+        findingsHash: fingerprint(JSON.stringify(found.map((entry) => [entry.severity, entry.title, entry.location]))),
+        at: result.createdAt.toISOString(),
       }),
     });
   }

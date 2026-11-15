@@ -1,14 +1,35 @@
-import { lstat, readFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { REPOSITORY, planFor } from "./plans.mjs";
+import { isShared, planFor } from "./plans.mjs";
 import { fetchRepository } from "./repository.mjs";
+import { runChaincheck } from "./runners/chaincheck.mjs";
 import { runEslintSecurity } from "./runners/eslint-security.mjs";
+import { runSolhint } from "./runners/solhint.mjs";
+import { runWebcheck } from "./runners/webcheck.mjs";
 import { runForgeBuild, runForgeTest } from "./runners/forge.mjs";
 import { runSlither } from "./runners/slither.mjs";
 import { runVitest } from "./runners/vitest.mjs";
 import { prepareEmptyRunDirectory, prepareRunDirectory, removeRunDirectory } from "./workspace.mjs";
 
 const MAX_LOG = 200_000;
+const FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+const MAX_SHARED_BYTES = 600_000;
+
+/** Write the files a buyer shared into the job's private directory. They are only ever read. */
+async function writeSharedFiles(runDir, files) {
+  let bytes = 0;
+  let written = 0;
+  for (const file of Array.isArray(files) ? files.slice(0, 20) : []) {
+    if (typeof file?.name !== "string" || typeof file?.content !== "string" || !FILE_NAME.test(file.name)) continue;
+    bytes += Buffer.byteLength(file.content);
+    if (bytes > MAX_SHARED_BYTES) break;
+    await mkdir(runDir, { recursive: true });
+    await writeFile(path.join(runDir, file.name), file.content);
+    written += 1;
+  }
+  if (written === 0) throw new Error("The job carried no files that can be read.");
+  return written;
+}
 const CONTEXT_LINES = 3;
 const MAX_EXCERPT_LINES = 40;
 const MAX_LINE_LENGTH = 240;
@@ -50,9 +71,9 @@ async function excerptFor(runDir, finding) {
  * Execute one job and return its result. The job only says which fixture and
  * which capability; what is run is decided by this worker's own table.
  *
- * @param {{ id: string, fixtureKey: string, capability: string, source?: { kind: string, owner: string, repo: string } }} job
+ * @param {{ id: string, fixtureKey: string, capability: string, source?: Record<string, unknown>, files?: Array<{ name: string, content: string }> }} job
  * @param {Record<string, string | null>} tools
- * @param {{ fetchSource?: typeof fetchRepository }} [options] Test hook: stand in for GitHub.
+ * @param {{ fetchSource?: typeof fetchRepository, runWebcheck?: (input: any) => Promise<any>, runChaincheck?: (input: any) => Promise<any> }} [options] Test hooks: stand in for GitHub, a website, the chain.
  */
 export async function executeJob(job, tools, options = {}) {
   const plan = planFor(job.fixtureKey, job.capability);
@@ -84,28 +105,33 @@ export async function executeJob(job, tools, options = {}) {
     };
   }
 
-  const shared = job.fixtureKey === REPOSITORY;
+  const shared = isShared(job.fixtureKey);
   const runDir = shared ? await prepareEmptyRunDirectory(job.id) : await prepareRunDirectory(job.fixtureKey, job.id);
   try {
     let origin = null;
-    if (shared) {
-      try {
+    let provenance = "";
+    try {
+      if (job.fixtureKey === "github") {
         origin = await (options.fetchSource ?? fetchRepository)(job.source, runDir);
-      } catch (error) {
-        return {
-          outcome: "error",
-          tool: plan.tool,
-          toolVersion,
-          command: "",
-          exitCode: null,
-          durationMs: 0,
-          log: "",
-          error: `The repository could not be fetched: ${String(error?.message ?? error).slice(0, 300)}`,
-          findings: [],
-        };
+        provenance = `Read github.com/${origin.name}${origin.revision ? ` at commit ${origin.revision}` : ""}: ${origin.files} files. Nothing in it was installed, built or run.\n`;
+      } else if (job.fixtureKey === "files") {
+        const written = await writeSharedFiles(runDir, job.files);
+        provenance = `Read ${written} shared ${written === 1 ? "file" : "files"}. Nothing in ${written === 1 ? "it" : "them"} was run.\n`;
       }
+    } catch (error) {
+      return {
+        outcome: "error",
+        tool: plan.tool,
+        toolVersion,
+        command: "",
+        exitCode: null,
+        durationMs: 0,
+        log: "",
+        error: `${job.fixtureKey === "github" ? "The repository could not be fetched" : "The shared files could not be read"}: ${String(error?.message ?? error).slice(0, 300)}`,
+        findings: [],
+      };
     }
-    const input = { runDir, target: plan.target, timeoutMs: plan.timeoutMs, toolVersion, shared };
+    const input = { runDir, target: plan.target, timeoutMs: plan.timeoutMs, toolVersion, shared, source: job.source };
     const result =
       plan.runner === "vitest"
         ? await runVitest(input)
@@ -115,13 +141,15 @@ export async function executeJob(job, tools, options = {}) {
             ? await runForgeBuild(input)
             : plan.runner === "eslint-security"
               ? await runEslintSecurity(input)
-              : await runSlither(input);
+              : plan.runner === "solhint"
+                ? await runSolhint(input)
+                : plan.runner === "webcheck"
+                  ? await (options.runWebcheck ?? runWebcheck)(input)
+                  : plan.runner === "chaincheck"
+                    ? await (options.runChaincheck ?? runChaincheck)(input)
+                    : await runSlither(input);
     // Paths inside the private run directory mean nothing to a reader.
     const scrub = (text) => String(text ?? "").replaceAll(runDir, ".");
-    // What was read, and at which commit, is part of the record of the run.
-    const provenance = origin
-      ? `Read github.com/${origin.name}${origin.revision ? ` at commit ${origin.revision}` : ""}: ${origin.files} files. Nothing in it was installed, built or run.\n`
-      : "";
     return {
       ...result,
       log: (provenance + scrub(result.log)).slice(0, MAX_LOG),

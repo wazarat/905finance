@@ -1,7 +1,7 @@
 import "server-only";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
-import type { Finding, TestingJobStatus, TestingOutcome } from "@/db/schema";
+import type { Finding, JobSource, TestingJobStatus, TestingOutcome } from "@/db/schema";
 import { describeResult, SEVERITIES, type Severity } from "@/lib/testing";
 import type { AssetInfo } from "@/lib/units";
 import { assertAuthenticated, isUuid, requirePermission, requirePermissionOnRecord, type Actor } from "../authz";
@@ -180,8 +180,8 @@ export async function listEngagementJobs(actor: Actor | null, engagementId: stri
 
 export type TestingReport = JobLine & {
   fixtureKey: string;
-  /** The repository that was read, when the job was for one the buyer shared. */
-  repository: { owner: string; repo: string } | null;
+  /** What was read, when the job was for something the buyer shared. Null for a bundled project. */
+  source: JobSource | null;
   attempts: number;
   claimedAt: Date | null;
   execution: {
@@ -225,7 +225,7 @@ export async function getTestingReport(actor: Actor | null, jobId: string): Prom
   return {
     ...toJobLine(row, counts),
     fixtureKey: row.job.fixtureKey,
-    repository: row.job.source ? { owner: row.job.source.owner, repo: row.job.source.repo } : null,
+    source: row.job.source ?? null,
     attempts: row.job.attempts,
     claimedAt: row.job.claimedAt,
     execution: row.result
