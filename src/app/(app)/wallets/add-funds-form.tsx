@@ -15,7 +15,7 @@ export function AddSimulatedFundsForm({ rail, assetCode }: { rail: string; asset
     <form action={action} className="space-y-2" noValidate>
       <input type="hidden" name="rail" value={rail} />
       <label htmlFor={id} className="text-xs text-muted-foreground">
-        Add simulated funds ({assetCode})
+        Add funds ({assetCode})
       </label>
       <div className="flex gap-2">
         <Input
@@ -31,6 +31,7 @@ export function AddSimulatedFundsForm({ rail, assetCode }: { rail: string; asset
           Add
         </SubmitButton>
       </div>
+      <p className="text-xs text-muted-foreground">A test balance. No card or bank account is charged.</p>
       <FieldError id={`${id}-error`} messages={errors.amount} />
       {state.message && !errors.amount ? (
         <FormMessage message={state.message} tone={state.ok ? "success" : "error"} />

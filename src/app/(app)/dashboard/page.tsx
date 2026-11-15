@@ -102,7 +102,7 @@ async function BuyerDashboardContent() {
                 ))}
               </ul>
               <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                Unallocated, per rail. Simulated.
+                Unallocated. Test funds.
               </p>
             </>
           )}
@@ -142,7 +142,7 @@ async function BuyerDashboardContent() {
             {spending.map((total) => (
               <li key={`${total.rail}-${total.asset.code}`}>
                 <p className="figure text-xl text-foreground">{formatUnits(total.spentUnits, total.asset)}</p>
-                <p className="text-xs text-muted-foreground">{total.isSimulated ? "Simulated" : "Settled"}</p>
+                <p className="text-xs text-muted-foreground">{total.isSimulated ? "Test funds" : "Settled on GOAT"}</p>
               </li>
             ))}
           </ul>

@@ -33,7 +33,7 @@ const ACTIONS: Record<string, string> = {
   "mandate.drafted": "Saved a draft mandate",
   "engagement.authorized": "Authorized an engagement and its mandate",
   "engagement_wallet.provisioned": "Provisioned an engagement wallet",
-  "master_wallet.simulated_deposit": "Added simulated funds",
+  "master_wallet.simulated_deposit": "Added funds",
   "funding.authorized": "Authorized funding",
   "funding.failed": "Funding failed; no funds moved",
   "purchase.blocked": "A purchase was blocked",
@@ -72,7 +72,7 @@ function detail(line: AuditLine): string {
     amountOf(text("asset"), text("amountUnits")),
     text("agentId") ? `agent ${text("agentId")}` : "",
     text("reason"),
-    data.simulated === true ? "simulated" : data.simulated === false ? "real" : "",
+    data.simulated === true ? "test funds" : data.simulated === false ? "on GOAT Testnet3" : "",
   ].filter(Boolean);
   return parts.join(" · ");
 }

@@ -9,6 +9,7 @@ import { SimulatedBadge } from "@/components/engagements/badges";
 import { ChainLink } from "@/components/goat/chain-link";
 import { AutoRefresh } from "@/components/testing/auto-refresh";
 import { JobBadge, SeverityBadge, SeverityTally } from "@/components/testing/badges";
+import { CodeExcerpt } from "@/components/testing/code-excerpt";
 import { Button } from "@/components/ui/button";
 import { capabilityLabel, getFixture, railLabel } from "@/lib/capabilities";
 import { FINDING_CATEGORY_LABELS, JOB_STATUS_LABELS, formatDuration, toolLabel } from "@/lib/testing";
@@ -132,8 +133,8 @@ async function ReportContent({ params }: { params: Promise<{ jobId: string }> })
           </div>
           {!hasCounts && result.outcome !== "error" ? (
             <p className="text-xs leading-relaxed text-muted-foreground col-span-2 lg:col-span-4">
-              {toolLabel(result.tool)} does not run individual tests for this kind of job, so there
-              are no test counts to show.
+              This kind of job reports findings rather than individual tests, so there are no test
+              counts to show.
             </p>
           ) : null}
         </section>
@@ -143,7 +144,7 @@ async function ReportContent({ params }: { params: Promise<{ jobId: string }> })
         title="Findings"
         description={
           result
-            ? "Each one was reported by the tool, with the tool's own output as evidence."
+            ? "Each one was reported by the tool, shown with the code it points at and the tool's own output."
             : "Findings appear once the test has run."
         }
         action={result ? <SeverityTally counts={report.findingCounts} /> : null}
@@ -173,9 +174,23 @@ async function ReportContent({ params }: { params: Promise<{ jobId: string }> })
                     </>
                   ) : null}
                 </p>
+                {finding.code ? (
+                  <div>
+                    <p className="eyebrow">
+                      {finding.category === "security"
+                        ? "Vulnerable code"
+                        : finding.category === "test_failure"
+                          ? "Where it fails"
+                          : "Code flagged"}
+                    </p>
+                    <div className="mt-1.5">
+                      <CodeExcerpt code={finding.code} tone={finding.category === "test_failure" ? "warn" : "danger"} />
+                    </div>
+                  </div>
+                ) : null}
                 {finding.evidence ? (
                   <div>
-                    <p className="eyebrow">Evidence</p>
+                    <p className="eyebrow">{finding.code ? "What the tool reported" : "Evidence"}</p>
                     <pre className="figure mt-1.5 max-h-80 overflow-auto rounded-lg border border-border bg-background/60 p-3 text-xs leading-relaxed whitespace-pre-wrap text-ink-soft">
                       {finding.evidence}
                     </pre>
@@ -227,7 +242,7 @@ async function ReportContent({ params }: { params: Promise<{ jobId: string }> })
           </Fact>
           <Fact label="Usage charge">
             <span className="figure">{formatUnits(report.chargeUnits, report.asset)}</span>
-            {report.isSimulatedPayment ? <SimulatedBadge className="ml-2" label="Payment simulated" /> : null}
+            {report.isSimulatedPayment ? <SimulatedBadge className="ml-2" /> : null}
           </Fact>
           <Fact label="Payment reference">
             {report.paymentReference ? <ChainLink value={report.paymentReference} /> : "None"}
@@ -261,7 +276,7 @@ async function ReportContent({ params }: { params: Promise<{ jobId: string }> })
         </dl>
         {report.isSimulatedPayment ? (
           <p className="mt-5 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground">
-            The test execution is real. The payment for it is simulated: no real asset moved.
+            The test execution is real. The payment was made in test funds: no real asset moved.
           </p>
         ) : null}
       </Panel>

@@ -5,18 +5,6 @@ import { cn } from "@/lib/utils";
 const pill =
   "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium whitespace-nowrap";
 
-/** Marks illustrative data so it is never mistaken for a real provider. */
-export function SampleBadge({ className }: { className?: string }) {
-  return (
-    <span
-      className={cn(pill, "border-warn/30 bg-warn-dim text-warn", className)}
-      title="Illustrative listing provided by 905 Finance. Not a real provider."
-    >
-      Sample listing
-    </span>
-  );
-}
-
 const STATUS: Record<ListingStatus, { label: string; className: string; dot: string }> = {
   draft: {
     label: "Draft",

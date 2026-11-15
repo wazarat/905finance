@@ -248,14 +248,33 @@ export async function claimTestingJob(raw: unknown): Promise<ClaimedJob | null> 
 
 const count = z.number().int().min(0).max(1_000_000).nullable().optional();
 
+/** The source lines a finding points at. Text to be shown, never executed or interpreted. */
+const codeInput = z
+  .object({
+    file: z.string().min(1).max(300),
+    startLine: z.number().int().min(1).max(10_000_000),
+    highlightStart: z.number().int().min(1).max(10_000_000),
+    highlightEnd: z.number().int().min(1).max(10_000_000),
+    lines: z.array(z.string().max(400)).min(1).max(60),
+  })
+  .strict()
+  .refine(
+    (code) =>
+      code.highlightStart >= code.startLine &&
+      code.highlightEnd >= code.highlightStart &&
+      code.highlightEnd < code.startLine + code.lines.length,
+    "The highlighted lines must lie inside the excerpt.",
+  );
+
 const findingInput = z
   .object({
     title: z.string().trim().min(1).max(300),
     severity: z.enum(SEVERITIES),
-    category: z.enum(["test_failure", "static_analysis", "compiler"]),
+    category: z.enum(["test_failure", "static_analysis", "compiler", "security"]),
     location: z.string().max(500).nullish(),
     evidence: z.string().max(20_000).nullish(),
     recommendation: z.string().max(2_000).nullish(),
+    code: codeInput.nullish(),
   })
   .strict();
 
@@ -373,6 +392,7 @@ export async function submitTestingResult(jobId: string, raw: unknown): Promise<
           location: finding.location ?? "",
           evidence: finding.evidence ?? "",
           recommendation: finding.recommendation ?? "",
+          code: finding.code ?? null,
         })),
       );
     }

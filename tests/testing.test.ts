@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
@@ -49,6 +51,7 @@ import { executeJob } from "../worker/src/job.mjs";
 import { PLANS, supportedPairs } from "../worker/src/plans.mjs";
 import { describeCounterexample, parseForgeTestReport } from "../worker/src/runners/forge.mjs";
 import { parseSlitherReport } from "../worker/src/runners/slither.mjs";
+import { parseEslintReport, runEslintSecurity } from "../worker/src/runners/eslint-security.mjs";
 import { detectTools } from "../worker/src/tools.mjs";
 import {
   addMember,
@@ -244,7 +247,7 @@ async function drainQueue() {
 
 beforeAll(async () => {
   ({ db, close } = await useTestDatabase());
-  relay = await createSeller("relay", ["unit_testing", "regression_testing", "api_testing", "dependency_checks"]);
+  relay = await createSeller("relay", ["unit_testing", "regression_testing", "api_testing", "security_scan", "dependency_checks"]);
   ledger = await createSeller("ledger", [
     "foundry_unit",
     "foundry_fuzz",
@@ -892,8 +895,15 @@ describe("the worker is kept away from credentials", () => {
 
   it("imports nothing from the application and no database or wallet library", async () => {
     const manifest = JSON.parse(await readFile("worker/package.json", "utf8"));
-    expect(Object.keys(manifest.dependencies)).toEqual(["vitest"]);
-    for (const file of ["main", "job", "exec", "plans", "tools", "workspace", "runners/vitest", "runners/forge", "runners/slither"]) {
+    // Testing tools and nothing else: no database driver, no wallet or signing library.
+    expect(Object.keys(manifest.dependencies)).toEqual([
+      "@typescript-eslint/parser",
+      "eslint",
+      "eslint-plugin-security",
+      "typescript",
+      "vitest",
+    ]);
+    for (const file of ["main", "job", "exec", "plans", "tools", "workspace", "runners/vitest", "runners/forge", "runners/slither", "runners/eslint-security"]) {
       const source = await readFile(`worker/src/${file}.mjs`, "utf8");
       const imports = [...source.matchAll(/from\s+"([^"]+)"/g)].map((match) => match[1]);
       for (const specifier of imports) {
@@ -922,7 +932,62 @@ describe("the worker is kept away from credentials", () => {
   });
 });
 
+describe("a finding's code excerpt", () => {
+  const withCode = (code: unknown) =>
+    failingReport({ findings: [{ ...failingReport().findings[0], location: "tests/unit/cart.test.ts:31", code }] });
+
+  it("is stored with the finding and comes back in the report", async () => {
+    const { job } = await queuedJob();
+    await claimTestingJob({ workerId: "w1", tools: { vitest: "x" }, supports: NODE_PAIRS });
+    const code = { file: "tests/unit/cart.test.ts", startLine: 30, highlightStart: 31, highlightEnd: 31, lines: ["it(...)", "  expect(a).toBe(b);", "});"] };
+    await submitTestingResult(job.id, { workerId: "w1", result: withCode(code) });
+    expect((await getTestingReport(acme.owner, job.id)).findings[0].code).toEqual(code);
+  });
+
+  it("is refused when it is not a plain, bounded excerpt", async () => {
+    const { job } = await queuedJob();
+    await claimTestingJob({ workerId: "w1", tools: { vitest: "x" }, supports: NODE_PAIRS });
+    const good = { file: "a.ts", startLine: 10, highlightStart: 11, highlightEnd: 11, lines: ["a", "b", "c"] };
+    for (const bad of [
+      { ...good, highlightStart: 9 },
+      { ...good, highlightEnd: 13 },
+      { ...good, highlightStart: 12, highlightEnd: 11 },
+      { ...good, lines: [] },
+      { ...good, lines: Array.from({ length: 61 }, () => "x") },
+      { ...good, lines: ["x".repeat(401)] },
+      { ...good, html: "<script>" },
+      "src/a.ts",
+    ]) {
+      await expect(submitTestingResult(job.id, { workerId: "w1", result: withCode(bad) }), JSON.stringify(bad).slice(0, 60)).rejects.toMatchObject({ code: "invalid" });
+    }
+    expect((await jobById(job.id)).status).toBe("running");
+  });
+});
+
 describe("reading tool reports", () => {
+  it("names the weakness from the rule ESLint says fired, and invents nothing", () => {
+    const findings = parseEslintReport(
+      [
+        {
+          filePath: "/run/src/a.ts",
+          messages: [
+            { ruleId: "security/detect-eval-with-expression", severity: 2, message: "eval with argument of type Identifier", line: 7, endLine: 7 },
+            { ruleId: "security/some-future-rule", severity: 2, message: "Something new", line: 2, endLine: 4 },
+            { ruleId: null, fatal: true, severity: 2, message: "Parsing error: Unexpected token", line: 1 },
+          ],
+        },
+        { filePath: "/run/src/clean.ts", messages: [] },
+      ],
+      "/run",
+    );
+    expect(findings).toHaveLength(3);
+    expect(findings[0]).toMatchObject({ severity: "high", category: "security", location: "src/a.ts:7", span: { start: 7, end: 7 } });
+    expect(findings[0].evidence).toBe("eval with argument of type Identifier\nESLint rule: security/detect-eval-with-expression");
+    expect(findings[1]).toMatchObject({ title: "Security rule: some-future-rule", severity: "low", span: { start: 2, end: 4 } });
+    expect(findings[2]).toMatchObject({ severity: "info", category: "compiler" });
+    expect(parseEslintReport([], "/run")).toEqual([]);
+  });
+
   it("describes a fuzz counterexample and an invariant-breaking sequence", () => {
     expect(describeCounterexample(null)).toBe("");
     const single = describeCounterexample({ Single: { calldata: "0x", args: "[0]", raw_args: ["0"] } });
@@ -1050,6 +1115,64 @@ describe("real execution", () => {
     expect(report.chargeUnits).toBe(1000n);
     expect(report.paymentReference).toContain("demo-payment:goat:");
     expect((await purchaseById(report.purchaseId)).status).toBe("delivered");
+  });
+
+  it("shows the code each finding points at, read from the project itself", { timeout: 120_000 }, async () => {
+    const report = await buyAndExecute(acme, relay, acme.node, "unit_testing");
+    const code = report.findings[0].code!;
+    expect(code.file).toBe("tests/unit/cart.test.ts");
+    expect(report.findings[0].location).toBe(`tests/unit/cart.test.ts:${code.highlightStart}`);
+    // The marked line is the assertion that failed, and it is really in the fixture at that line.
+    const source = (await readFile(`fixtures/${NODE}/tests/unit/cart.test.ts`, "utf8")).split("\n");
+    expect(code.lines[code.highlightStart - code.startLine]).toBe(source[code.highlightStart - 1]);
+    expect(code.lines[code.highlightStart - code.startLine]).toContain("expect(");
+    expect(code.lines.length).toBeLessThanOrEqual(40);
+  });
+
+  it.skipIf(!tools.eslint)("the security scan finds the four weaknesses in the ordering service", { timeout: 120_000 }, async () => {
+    const report = await buyAndExecute(acme, relay, acme.node, "security_scan");
+    expect(report.status).toBe("completed");
+    expect(report.result).toMatchObject({
+      outcome: "failed",
+      tool: "eslint",
+      testsTotal: null,
+      summary: "ESLint security rules reported 4 findings: 1 high, 3 medium.",
+    });
+    expect(report.execution!.exitCode).toBe(1);
+    const found = Object.fromEntries(report.findings.map((f) => [f.code!.file, f]));
+    expect(Object.keys(found).sort()).toEqual(["src/admin.ts", "src/promotions.ts", "src/receipts.ts", "src/search.ts"]);
+    expect(found["src/promotions.ts"]).toMatchObject({ severity: "high", category: "security" });
+    expect(found["src/promotions.ts"].title).toContain("Code injection");
+    expect(found["src/receipts.ts"].title).toContain("Path traversal");
+    expect(found["src/search.ts"].title).toContain("Regular expression injection");
+    expect(found["src/admin.ts"].title).toContain("Timing attack");
+    // Each one carries the rule that fired and the line it fired on.
+    for (const finding of report.findings) {
+      expect(finding.evidence, finding.title).toContain("ESLint rule: security/");
+      const line = finding.code!.lines[finding.code!.highlightStart - finding.code!.startLine];
+      const source = (await readFile(`fixtures/${NODE}/${finding.code!.file}`, "utf8")).split("\n");
+      expect(line, finding.title).toBe(source[finding.code!.highlightStart - 1]);
+    }
+    expect(found["src/promotions.ts"].code!.lines.join("\n")).toContain("eval(check)");
+    expect((await purchaseById(report.purchaseId)).status).toBe("delivered");
+  });
+
+  it.skipIf(!tools.eslint)("the code being scanned cannot switch a security rule off", { timeout: 60_000 }, async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "scan-"));
+    try {
+      await mkdir(path.join(dir, "src"));
+      await writeFile(
+        path.join(dir, "src", "sneaky.js"),
+        "/* eslint-disable */\nexport function run(input) {\n  return eval(input); // eslint-disable-line\n}\n",
+      );
+      await writeFile(path.join(dir, "eslint.config.mjs"), "export default [{ ignores: ['**/*'] }];\n");
+      const result = await runEslintSecurity({ runDir: dir, target: "src", timeoutMs: 60_000, toolVersion: tools.eslint! });
+      expect(result.outcome).toBe("failed");
+      expect(result.findings).toHaveLength(1);
+      expect(result.findings[0]).toMatchObject({ severity: "high", location: "src/sneaky.js:3" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("Vitest reports a clean pass where nothing is wrong", { timeout: 120_000 }, async () => {

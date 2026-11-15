@@ -48,6 +48,13 @@ export const CAPABILITIES = [
     web3: false,
   },
   {
+    key: "security_scan",
+    label: "Security scan",
+    description: "Static analysis of application code for injection, traversal and other security weaknesses.",
+    domain: "software_testing",
+    web3: false,
+  },
+  {
     key: "dependency_checks",
     label: "Dependency checks",
     description: "Flags known-vulnerable or outdated dependencies where supported.",
@@ -180,7 +187,7 @@ export const PAYMENT_RAILS = [
   },
   {
     key: "qatom",
-    label: "Earlier demo account",
+    label: "Earlier account",
     asset: "USD-TDN",
     simulatedAsset: { code: "USD-TDN", decimals: 2 },
     retired: true,

@@ -2,11 +2,12 @@ import { randomUUID } from "node:crypto";
 import Link from "next/link";
 import { NotYetActive, Panel } from "@/components/app/page-header";
 import { SimulatedBadge } from "@/components/engagements/badges";
+import { ChainLink } from "@/components/goat/chain-link";
 import { AutoRefresh } from "@/components/testing/auto-refresh";
 import { JobBadge } from "@/components/testing/badges";
 import { Button } from "@/components/ui/button";
 import type { EngagementState, PurchaseStatus } from "@/db/schema";
-import { formatUnits, unitsToDecimalString } from "@/lib/units";
+import { assetLabel, formatUnits, unitsToDecimalString } from "@/lib/units";
 import { cn } from "@/lib/utils";
 import type { ApprovalSummary } from "@/server/approvals";
 import type { BudgetStatus } from "@/server/budget";
@@ -161,7 +162,7 @@ export function ApprovalPanel({
           ) : isBudget ? (
             <BudgetDecisionForms
               approvalId={approval.id}
-              assetCode={asset.code}
+              assetCode={assetLabel(asset.code)}
               minimumTotal={unitsToDecimalString(needed, asset.decimals)}
               currentTotalLabel={formatUnits(approval.totalAuthorizedUnits, asset)}
               alternatives={activity.alternatives.map((option) => ({
@@ -213,7 +214,7 @@ export function AgentPanel({
             Messages via Qatom
           </span>
         ) : sellerConnection?.simulated ? (
-          <SimulatedBadge label="In-app demo channel" />
+          <SimulatedBadge label="Built-in channel" />
         ) : null
       }
     >
@@ -236,7 +237,7 @@ export function AgentPanel({
           </div>
           <div>
             <dt className="text-muted-foreground">Agent</dt>
-            <dd className="mt-0.5 text-foreground">Scripted demo agent, no language model</dd>
+            <dd className="mt-0.5 text-foreground">Scripted agent, no language model</dd>
           </div>
           {testing ? (
             <div className="sm:col-span-2">
@@ -264,7 +265,7 @@ export function AgentPanel({
         {!sellerConnection ? (
           <p className="text-sm leading-relaxed text-muted-foreground">
             {sellerName}&apos;s agent endpoint is not connected yet. In this version the purchasing
-            agent can only run against the sample sellers. <NotYetActive />
+            agent can only run with sellers whose agent is connected to 905 Finance. <NotYetActive />
           </p>
         ) : state === "ACTIVE" ? (
           activity.can.operate ? (
@@ -327,7 +328,7 @@ function PurchaseRow({ purchase, canOperate }: { purchase: PurchaseLine; canOper
         <span className={status.className}>{status.label}</span>
         <span className="text-muted-foreground">{dateTimeFormat.format(purchase.createdAt)}</span>
         {purchase.isSimulated && (purchase.status === "paid" || purchase.status === "delivered") ? (
-          <SimulatedBadge label="Payment simulated" />
+          <SimulatedBadge />
         ) : null}
       </div>
       {purchase.message ? <p className="text-sm text-muted-foreground">{purchase.message}</p> : null}
@@ -351,7 +352,9 @@ function PurchaseRow({ purchase, canOperate }: { purchase: PurchaseLine; canOper
         <p className="text-sm text-muted-foreground">{purchase.deliverySummary}</p>
       ) : null}
       {purchase.paymentReference ? (
-        <p className="figure text-xs break-all text-muted-foreground">{purchase.paymentReference}</p>
+        <p className="text-xs text-muted-foreground">
+          <ChainLink value={purchase.paymentReference} />
+        </p>
       ) : null}
       {purchase.status === "needs_reconciliation" && canOperate ? (
         <div className="pt-1">

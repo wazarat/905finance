@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
-import { CapabilityChip, SampleBadge } from "@/components/sellers/badges";
+import { CapabilityChip } from "@/components/sellers/badges";
 import { formatMoney } from "@/lib/money";
 import type { PublicSeller } from "@/server/marketplace";
 
@@ -45,7 +45,6 @@ export function SellerCard({ seller }: { seller: PublicSeller }) {
           </p>
         </div>
         <div className="flex flex-col items-end gap-1.5">
-          {seller.isSample ? <SampleBadge /> : null}
         </div>
       </div>
     </Link>

@@ -19,6 +19,7 @@ export function parseSlitherReport(report) {
       severity: SEVERITY[detector.impact] ?? "info",
       category: "static_analysis",
       location: mapping ? `${mapping.filename_relative}${line}` : "",
+      span: line ? { start: Math.min(...mapping.lines), end: Math.max(...mapping.lines) } : undefined,
       evidence: [
         String(detector.description ?? "").trim(),
         detector.confidence ? `Slither confidence: ${detector.confidence}` : "",

@@ -661,7 +661,7 @@ describe("rail separation", () => {
     const engagement = await awaitingFunding(buyer, beta);
 
     const error = await authorizeFunding(buyer.owner, engagement, funding("10")).catch((e) => e);
-    expect(error.fieldErrors.amount[0]).toContain("0.00 SIM-USD");
+    expect(error.fieldErrors.amount[0]).toContain("0.00 USD");
     expect(await masterBalance(buyer.org, "qatom")).toBe(50000n);
     expect((await walletOf(engagement)).balanceUnits).toBe(0n);
 

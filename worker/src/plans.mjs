@@ -15,6 +15,7 @@ export const PLANS = {
     unit_testing: { tool: "vitest", runner: "vitest", target: "tests/unit", timeoutMs: 120_000 },
     regression_testing: { tool: "vitest", runner: "vitest", target: "tests/regression", timeoutMs: 120_000 },
     api_testing: { tool: "vitest", runner: "vitest", target: "tests/api", timeoutMs: 120_000 },
+    security_scan: { tool: "eslint", runner: "eslint-security", target: "src", timeoutMs: 120_000 },
   },
   "sample-solidity-vault": {
     solidity_compilation: { tool: "forge", runner: "forge-build", timeoutMs: 180_000 },

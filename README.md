@@ -19,6 +19,7 @@ The product was built in seven milestones, one at a time. All seven are built. W
 | 5 | Qatom: agent communication | **Built**; live run awaits a Qatom sign-in and catalog items |
 | 6 | GOAT Network: ERC-8004 identity and payment | Identity and reputation **live on Testnet3**; wallets and payments **built**, awaiting Privy, a GOAT Flow test merchant and test funds |
 | 7 | End-to-end integration and deployment | **Complete** on simulated settlement; deployed. The live Qatom and GOAT runs await the items above |
+| 8 | Presentation and security findings | **Complete** |
 
 ### What works today (Milestone 1)
 
@@ -42,7 +43,7 @@ The product was built in seven milestones, one at a time. All seven are built. W
 - A single gate that decides whether a purchasing agent may contact a seller: only for an ACTIVE engagement, only its selected seller.
 - Cancellation and deadline expiry, both of which end the agent's authority and leave any funds in place.
 
-**Simulated value is labelled as such.** A simulated wallet is a record kept by the platform; no account, chain or asset exists behind it, and it is labelled **Simulated** wherever it appears. Real wallets arrived in Milestone 6 behind the same provider interface.
+**Test funds are marked as such.** A test wallet is a record kept by the platform; no account, chain or asset exists behind it, and it carries a **Test funds** marker wherever it appears. Real wallets arrived in Milestone 6 behind the same provider interface.
 
 ### What works today (Milestone 3)
 
@@ -84,7 +85,7 @@ Every engagement uses two networks together, each for one job. They are not alte
 - **A seller that checks for itself.** The seller's agent accepts an order only after confirming, from the payment reference, that the purchase really was paid.
 - **Every message records its carrier.** The engagement page shows whether a message went over Qatom, with Qatom's transaction id, or over the in-app demo channel.
 
-Until a Qatom account is linked and a seller has a catalog item, agents reach the sample sellers over the in-app demo channel, which is labelled as such.
+Until a Qatom account is linked and a seller has a catalog item, agents reach the platform's own sellers over the built-in channel, which is marked as such.
 
 ### What works today (Milestone 6)
 
@@ -109,6 +110,13 @@ Until a Qatom account is linked and a seller has a catalog item, agents reach th
 - **An honest status panel.** Settings shows, for sign-in, the testing worker, Qatom, GOAT identity and GOAT payments, whether each is live, simulated or off in this deployment, and tells owners which settings are missing. It never shows a value.
 - **The whole journey as a test.** `tests/final.test.ts` walks the full demonstration from sign-up to a closed engagement with a real test execution in the middle, proves a second engagement is isolated from the first, and checks each of the eighteen security invariants by name.
 
+### What works today (Milestone 8)
+
+- **Dollars, plainly.** The platform's test balance is shown as USD. In the records it keeps its own code, so it can never be mistaken for a token.
+- **No demonstration labels.** The marketplace, engagement pages and reports no longer carry sample or demo tags. What remains is what a person needs to know about money: a **Test funds** marker on wallets and payments that are not on a chain, and the status panel in Settings.
+- **A security scan that names the weakness and shows the code.** A new service, sold by Relay QA, runs ESLint with `eslint-plugin-security` over the project's source. The bundled ordering service has four planted weaknesses (code injection through `eval`, a timing-unsafe token comparison, a path built from request input, a search pattern built from user input) and the scan finds all four. The code being scanned cannot switch a rule off.
+- **The code behind every finding.** Each finding now carries the lines it points at, read by the worker from the project itself, with the reported lines marked. This applies to failing tests, Slither findings and the security scan alike.
+
 ### What is not live yet
 
 Everything below is built and tested; none of it has been run against the real service. Each needs something only the operator can do.
@@ -127,7 +135,7 @@ Other limits, by design for now:
 - A test that could not run can be re-run free of charge; it is not refunded. A payment to a seller is never reversed by the platform.
 - Listing activation is a command-line step. There is no operator console.
 - GOAT is Testnet3 only. The application refuses any other chain and the production payment API. Assets there have no monetary value.
-- The two seeded sellers are illustrative and are labelled **Sample listing** wherever they appear.
+- The two seeded sellers, Relay QA and Ledgerproof, are operated by 905 Finance itself. Their agents are answered by the platform, and the tests they sell are executed by the platform's testing worker.
 
 ## Stack
 
@@ -186,7 +194,7 @@ With the app, the database and a local testing worker running (see below), the w
 2. Create a project from a bundled fixture, answering the Web3 question.
 3. Open **Explore agents**, choose a sample seller, and select it for the project.
 4. Set the mandate (for example a $20 budget and a $15 per-purchase limit) and authorize it.
-5. Provision the engagement's wallet, add simulated funds to the master account on the **Wallets** page, and authorize funding.
+5. Provision the engagement's wallet, add funds to the master account on the **Wallets** page, and authorize funding.
 6. Run the agent. It buys a permitted test; the worker executes it, and the result appears on the engagement and under **Test reports**, with the payment under **Transactions**.
 7. Run the agent again. The next purchase would exceed the budget, so the engagement pauses and an approval request appears.
 8. Read the report, then approve a higher budget under **Approvals**. No funds move.
@@ -228,7 +236,7 @@ cd worker
 APP_URL=http://localhost:3000 WORKER_TOKEN=<the token> node src/main.mjs
 ```
 
-In a container, which is how it is meant to run: a read-only filesystem, no Linux capabilities, an unprivileged user, and memory, CPU and process limits. The image includes Vitest, Foundry and Slither.
+In a container, which is how it is meant to run: a read-only filesystem, no Linux capabilities, an unprivileged user, and memory, CPU and process limits. The image includes Vitest, Foundry, Slither and ESLint with its security rules.
 
 ```bash
 docker compose --env-file .env.local --profile worker up --build worker
@@ -321,7 +329,7 @@ Set the GOAT values in `.env.example` (and the Privy credentials). You need:
 - the **USD token** that merchant is configured for (its contract address, symbol and decimals);
 - **test assets**: the buyer needs that token in their own wallet, and each engagement wallet needs a little test BTC for network fees (it pays its own).
 
-Until all of it is set, every engagement is simulated and says so.
+Until all of it is set, every engagement uses test funds, and its wallet and payments are marked **Test funds**.
 
 ### What cannot happen
 
@@ -350,7 +358,7 @@ Do **not** set `AUTH_MODE` on Vercel: development sign-in is refused in producti
 
 Environment variables only take effect on the next deployment, so redeploy after adding them.
 
-Production deployments apply pending database migrations during the build and add the two sample sellers if they are missing; an existing listing is never rewritten. Preview deployments and local builds do neither.
+Production deployments apply pending database migrations during the build and keep the platform's own two seller listings in step with `src/db/seed.ts`. A listing that is not the platform's is never touched. Preview deployments and local builds do neither.
 
 If a setting is missing, the server logs which one at startup. Public pages still load; pages that need the missing piece show an error screen or a "not configured" notice instead.
 
@@ -381,7 +389,7 @@ src/app/login, onboarding, logout, api/auth/session
 src/components/        UI primitives (shadcn) and feature components
 src/db/                Drizzle schema, client, migration runner, seed
 src/server/            authentication, permissions, data-access layer, audit
-src/server/wallets/    wallet-provider interface and the simulated provider
+src/server/wallets/    wallet-provider interface, the test-funds provider and the GOAT provider
 src/server/payments/   payment-provider interface and the demo provider
 src/server/agent/      agent runtime, brain interface, seller transport and demo seller
 src/server/goat/       Testnet3 access, ERC-8004 reads, GOAT Flow client, the signer, guarded document fetch
@@ -392,7 +400,7 @@ src/server/qatom/      Qatom account link, signed messages, MCP client, seller e
 src/server/seller-agent/  the sample sellers' side of a conversation
 src/server/testing/    job queue, worker endpoints' logic, reports
 src/app/api/worker/    the two endpoints a testing worker calls
-worker/                the testing worker: runners for Vitest, Foundry and Slither, Dockerfile
+worker/                the testing worker: runners for Vitest, Foundry, Slither and the security scan, Dockerfile
 fixtures/              the bundled projects with known defects that tests run against
 src/lib/               capability and rail catalog, state machine, money and unit helpers
 drizzle/               generated SQL migrations

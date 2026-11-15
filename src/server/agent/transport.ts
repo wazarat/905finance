@@ -77,7 +77,7 @@ export type SellerTransportContext = {
  */
 export class DemoSellerTransport implements SellerTransport {
   readonly description =
-    "In-app demo channel to a sample seller run by 905 Finance. Tests it sells are executed by the platform's testing worker.";
+    "Built-in channel to a seller agent run by 905 Finance. The tests it sells are executed by the platform's testing worker.";
   readonly simulated = true;
 
   constructor(private readonly context: SellerTransportContext) {}

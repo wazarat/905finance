@@ -25,7 +25,7 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-const STATE_LABELS = { live: "Live", partial: "Partly set up", simulated: "Simulated", off: "Off" } as const;
+const STATE_LABELS = { live: "Live", partial: "Partly set up", simulated: "Test mode", off: "Off" } as const;
 const STATE_TONE = {
   live: "text-brand",
   partial: "text-warn",
@@ -185,7 +185,7 @@ async function SettingsContent({ searchParams }: { searchParams: Promise<Record<
           ) : (
             <div className="space-y-4">
               <p className="max-w-2xl text-sm leading-relaxed text-ink-soft">
-                Not linked. Until it is, your agents reach the sample sellers over the in-app demo
+                Not linked. Until it is, your agents reach sellers over the built-in
                 channel. Linking sends you to Qatom to sign in there; this application never sees
                 your Qatom sign-in. It authorizes no payment.
               </p>
@@ -202,7 +202,7 @@ async function SettingsContent({ searchParams }: { searchParams: Promise<Record<
       <Panel
         title="GOAT Network"
         description={`${NETWORK_ROLES.settlement.role}. ${NETWORK_ROLES.settlement.detail}`}
-        action={goat ? null : <NotYetActive>Simulated</NotYetActive>}
+        action={goat ? null : <NotYetActive>Test mode</NotYetActive>}
       >
         {goat ? (
           <>
@@ -216,7 +216,7 @@ async function SettingsContent({ searchParams }: { searchParams: Promise<Record<
             </dl>
             <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
               New engagements with a seller that has a confirmed GOAT identity and receiving wallet
-              get a real wallet and pay through GOAT Flow. Others stay simulated. Testnet3 assets are
+              get a real wallet and pay through GOAT Flow. Others use test funds. Testnet3 assets are
               for testing and have no monetary value. Your funding wallet is your own: you fund each
               engagement by sending to its wallet yourself.
             </p>
@@ -224,7 +224,7 @@ async function SettingsContent({ searchParams }: { searchParams: Promise<Record<
         ) : (
           <p className="text-sm leading-relaxed text-muted-foreground">
             Seller identity and reputation are read from GOAT Testnet3 today. Wallets and payments
-            are simulated here until real settlement is switched on for this deployment.
+            use test funds here until on-chain settlement is switched on for this deployment.
           </p>
         )}
       </Panel>

@@ -8,6 +8,7 @@ export const TESTING_TOOLS = {
   vitest: "Vitest",
   forge: "Foundry",
   slither: "Slither",
+  eslint: "ESLint security rules",
 } as const;
 
 export type TestingTool = keyof typeof TESTING_TOOLS;
@@ -17,6 +18,7 @@ export const CAPABILITY_TOOLS: Record<string, TestingTool> = {
   unit_testing: "vitest",
   regression_testing: "vitest",
   api_testing: "vitest",
+  security_scan: "eslint",
   solidity_compilation: "forge",
   foundry_unit: "forge",
   foundry_fuzz: "forge",
@@ -42,6 +44,7 @@ export const SEVERITY_LABELS: Record<Severity, string> = {
 export const FINDING_CATEGORY_LABELS: Record<string, string> = {
   test_failure: "Failing test",
   static_analysis: "Static analysis",
+  security: "Security weakness",
   compiler: "Compiler",
 };
 
@@ -98,10 +101,11 @@ export function describeResult(
     if (result.testsSkipped) parts.push(`${result.testsSkipped} skipped`);
     return `${tool} ran ${plural(result.testsTotal, "test")}: ${parts.join(", ")}.`;
   }
-  if (result.tool === "slither") {
+  if (result.tool === "slither" || result.tool === "eslint") {
+    const subject = result.tool === "slither" ? "the contracts" : "the code";
     return findings.length === 0
-      ? "Slither analysed the contracts and reported nothing."
-      : `Slither reported ${plural(findings.length, "finding")}: ${severityBreakdown(findings)}.`;
+      ? `${tool} analysed ${subject} and reported nothing.`
+      : `${tool} reported ${plural(findings.length, "finding")}: ${severityBreakdown(findings)}.`;
   }
   return result.outcome === "passed"
     ? `${tool} compiled the contracts without errors.`

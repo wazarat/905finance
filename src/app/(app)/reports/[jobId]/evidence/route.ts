@@ -1,3 +1,4 @@
+import { assetLabel } from "@/lib/units";
 import { NextResponse, type NextRequest } from "next/server";
 import { getActor } from "@/server/auth/actor";
 import { isAppError } from "@/server/errors";
@@ -55,10 +56,11 @@ export async function GET(_request: NextRequest, context: RouteContext<"/reports
         location: finding.location,
         evidence: finding.evidence,
         recommendation: finding.recommendation,
+        code: finding.code,
       })),
       usage: {
         charge: report.chargeUnits.toString(),
-        asset: report.asset.code,
+        asset: assetLabel(report.asset.code),
         assetDecimals: report.asset.decimals,
         paymentReference: report.paymentReference,
         paymentRail: report.paymentRail,

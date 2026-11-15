@@ -85,6 +85,13 @@
       "when": 1794696798408,
       "tag": "0011_colossal_callisto",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794702951729,
+      "tag": "0012_fixed_moonstone",
+      "breakpoints": true
     }
   ]
 }

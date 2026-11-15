@@ -10,7 +10,7 @@ import {
 } from "@/components/engagements/badges";
 import { ChainLink } from "@/components/goat/chain-link";
 import { railLabel } from "@/lib/capabilities";
-import { formatUnits } from "@/lib/units";
+import { assetLabel, formatUnits } from "@/lib/units";
 import { roleHasPermission } from "@/server/authz";
 import { requireWorkspace } from "@/server/page-context";
 import { getWalletOverview } from "@/server/wallets";
@@ -22,7 +22,7 @@ export const metadata: Metadata = { title: "Wallets" };
 const dateTimeFormat = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" });
 
 const LEDGER_LABELS = {
-  simulated_deposit: "Simulated funds added to master account",
+  simulated_deposit: "Funds added to master account",
   funding_debit: "Allocated from master account to an engagement",
   funding_credit: "Received by engagement wallet",
   payment_debit: "Paid to seller from engagement wallet",
@@ -116,13 +116,13 @@ async function WalletsContent() {
             </p>
             {rail.retired ? (
               <p className="mt-4 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground">
-                From an earlier demonstration. Nothing new is created on this account; it is shown
+                From an earlier setup. Nothing new is created on this account; it is shown
                 for its history.
               </p>
             ) : rail.simulated ? (
               <div className="mt-5 border-t border-border pt-4">
                 {canManage ? (
-                  <AddSimulatedFundsForm rail={rail.rail} assetCode={rail.asset.code} />
+                  <AddSimulatedFundsForm rail={rail.rail} assetCode={assetLabel(rail.asset.code)} />
                 ) : (
                   <p className="text-xs text-muted-foreground">
                     Only the organization&apos;s owner can add funds.

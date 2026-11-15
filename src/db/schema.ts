@@ -1219,15 +1219,25 @@ export const findings = pgTable(
       .references(() => testingJobs.id, { onDelete: "cascade" }),
     title: text("title").notNull(),
     severity: findingSeverity("severity").notNull(),
-    /** test_failure, static_analysis or compiler. */
+    /** test_failure, static_analysis, compiler or security. */
     category: text("category").notNull(),
     location: text("location").notNull().default(""),
     evidence: text("evidence").notNull().default(""),
     recommendation: text("recommendation").notNull().default(""),
+    /** The source lines the finding points at, as the worker read them from the project. */
+    code: jsonb("code").$type<FindingCode>(),
     createdAt: createdAt(),
   },
   (t) => [index("findings_job_idx").on(t.jobId, t.sequence)],
 );
+
+export type FindingCode = {
+  file: string;
+  startLine: number;
+  highlightStart: number;
+  highlightEnd: number;
+  lines: string[];
+};
 
 /** Testing workers that have checked in, and what each can run. */
 export const testingWorkers = pgTable("testing_workers", {

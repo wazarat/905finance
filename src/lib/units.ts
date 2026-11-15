@@ -29,9 +29,20 @@ export function unitsToDecimalString(units: bigint, decimals: number): string {
   return `${whole}.${fraction}`;
 }
 
-/** Display text with thousands separators and the asset code, e.g. "1,250.00 USD-TDN". */
+/**
+ * How an asset is named to people. The platform's own test balance is kept
+ * under its own code so that it can never be confused with a token in the
+ * records, and is shown simply as USD.
+ */
+const DISPLAY_CODES: Record<string, string> = { "SIM-USD": "USD" };
+
+export function assetLabel(code: string): string {
+  return DISPLAY_CODES[code] ?? code;
+}
+
+/** Display text with thousands separators and the asset's name, e.g. "1,250.00 USD". */
 export function formatUnits(units: bigint, asset: AssetInfo): string {
   const [whole, fraction] = unitsToDecimalString(units, asset.decimals).split(".");
   const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return `${fraction === undefined ? grouped : `${grouped}.${fraction}`} ${asset.code}`;
+  return `${fraction === undefined ? grouped : `${grouped}.${fraction}`} ${assetLabel(asset.code)}`;
 }

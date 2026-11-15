@@ -15,7 +15,7 @@ export async function generateMetadata({ params }: PageProps<"/agents/[slug]">):
   return { title: seller.displayName, description: seller.tagline || undefined };
 }
 
-function SelectSellerPanel({ slug, isSample }: { slug: string; isSample: boolean }) {
+function SelectSellerPanel({ slug }: { slug: string }) {
   return (
     <div className="rounded-xl border border-brand/30 bg-card p-5">
       <p className="text-sm font-medium text-foreground">Hire this agent</p>
@@ -26,12 +26,6 @@ function SelectSellerPanel({ slug, isSample }: { slug: string; isSample: boolean
       <Button asChild size="lg" className="mt-4 h-10 w-full">
         <Link href={`/engagements/new?seller=${encodeURIComponent(slug)}`}>Select this seller</Link>
       </Button>
-      {isSample ? (
-        <p className="mt-3 text-xs leading-relaxed text-warn">
-          This is a sample listing. An engagement with it is a demonstration: no provider is
-          contacted and no real funds move.
-        </p>
-      ) : null}
     </div>
   );
 }
@@ -43,7 +37,7 @@ async function SellerProfile({ params }: { params: Promise<{ slug: string }> }) 
   return (
     <SellerDetail
       seller={seller}
-      action={<SelectSellerPanel slug={seller.slug} isSample={seller.isSample} />}
+      action={<SelectSellerPanel slug={seller.slug} />}
     />
   );
 }

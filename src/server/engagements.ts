@@ -429,7 +429,7 @@ export async function provisionEngagementWallet(
       engagement,
       "WALLET_PROVISIONED",
       who.userId,
-      provider.simulated ? "Dedicated simulated wallet provisioned." : "Dedicated wallet provisioned.",
+      "Dedicated wallet provisioned.",
     );
     const awaiting = await transition(
       tx,

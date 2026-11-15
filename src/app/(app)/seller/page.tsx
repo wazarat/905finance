@@ -93,7 +93,7 @@ async function SellerDashboardContent() {
               </ul>
               <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
                 {earnings.totals.every((t) => t.isSimulated)
-                  ? "Simulated. No real funds were received."
+                  ? "Test funds. Nothing can be withdrawn."
                   : "Per rail."}
               </p>
             </>

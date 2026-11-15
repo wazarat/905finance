@@ -71,7 +71,7 @@ export async function getIntegrationStatus(actor: Actor | null, organizationId: 
       summary:
         qatom?.connected && qatomItems > 0 && qatomSecret
           ? `Messages to ${qatomItems} ${qatomItems === 1 ? "seller go" : "sellers go"} through Qatom.${qatomAccountCredentials() ? " Every delivery is confirmed with Qatom." : ""}`
-          : "Agents use the in-app demo channel.",
+          : "Agents use the built-in channel.",
       missing: forOwner([
         ...(qatomSecret ? [] : ["QATOM_FULFILMENT_TOKEN"]),
         ...(qatomItems > 0 ? [] : ["QATOM_SELLER_ITEMS (a catalog item per seller)"]),

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { PageHeader, Panel } from "@/components/app/page-header";
 import { PageSkeleton } from "@/components/app/page-skeleton";
-import { CapabilityChip, SampleBadge } from "@/components/sellers/badges";
+import { CapabilityChip } from "@/components/sellers/badges";
 import { Button } from "@/components/ui/button";
 import { formatMoney } from "@/lib/money";
 import { roleHasPermission } from "@/server/authz";
@@ -82,7 +82,6 @@ async function NewEngagementContent({ searchParams }: PageProps<"/engagements/ne
           <div className="min-w-0 space-y-3">
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-lg font-semibold text-foreground">{seller.displayName}</p>
-              {seller.isSample ? <SampleBadge /> : null}
             </div>
             <p className="text-sm text-muted-foreground">{seller.tagline}</p>
             <div className="flex flex-wrap gap-1.5">

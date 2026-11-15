@@ -13,7 +13,6 @@ import {
   WalletStatusBadge,
 } from "@/components/engagements/badges";
 import { ChainLink } from "@/components/goat/chain-link";
-import { SampleBadge } from "@/components/sellers/badges";
 import { Button } from "@/components/ui/button";
 import {
   BILLING_UNIT_LABELS,
@@ -30,7 +29,7 @@ import {
   permitsFunding,
 } from "@/lib/engagement-state";
 import { formatMoney } from "@/lib/money";
-import { formatUnits, unitsToDecimalString } from "@/lib/units";
+import { assetLabel, formatUnits, unitsToDecimalString } from "@/lib/units";
 import { getEngagementActivity } from "@/server/engagement-activity";
 import {
   getEngagementDetail,
@@ -169,7 +168,7 @@ function MandateSummary({ detail }: { detail: EngagementDetail }) {
         <span className="figure">{formatUnits(mandate.perTransactionLimitUnits, mandate.asset)}</span>
       </Row>
       <Row label="Payment">
-        {detail.engagement.rail ? railLabel(detail.engagement.rail) : "—"} · {mandate.asset.code}
+        {detail.engagement.rail ? railLabel(detail.engagement.rail) : "—"} · {assetLabel(mandate.asset.code)}
       </Row>
       <Row label="Approved seller">{detail.seller.displayName}</Row>
       <Row label="Receiving account">
@@ -287,7 +286,7 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
 
   // --- draft mandate form inputs -------------------------------------------
   // Payment is always on the settlement network; its asset is what the mandate is denominated in.
-  const settlementAsset = mandate?.asset.code ?? getRail(SETTLEMENT_RAIL)!.simulatedAsset.code;
+  const settlementAsset = assetLabel(mandate?.asset.code ?? getRail(SETTLEMENT_RAIL)!.simulatedAsset.code);
   const activeOfferings = seller.offerings.filter((o) => o.isActive);
   const offeringOptions = activeOfferings.map((o) => ({
     id: o.id,
@@ -341,8 +340,7 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
         description={
           <span className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <EngagementStateBadge state={state} />
-            {seller.isSample ? <SampleBadge /> : null}
-            <span>
+                <span>
               Project:{" "}
               <Link href={`/projects/${project.id}`} className="text-ink-soft underline underline-offset-4">
                 {project.name}
@@ -375,16 +373,6 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
 
       <AgentAccess detail={detail} />
 
-      {seller.isSample ? (
-        <p className="rounded-xl border border-warn/30 bg-warn-dim px-5 py-3 text-sm text-ink-soft">
-          <span className="font-medium text-foreground">Sample seller.</span> This engagement is a
-          demonstration: the seller is run by 905 Finance.{" "}
-          {engagement.settlement === "simulated"
-            ? "No real funds exist or move."
-            : "Its wallet and payments are real ones on GOAT Testnet3, in test assets with no monetary value."}{" "}
-          The tests it buys are executed for real by the platform's testing worker.
-        </p>
-      ) : null}
 
       {activity.pendingApproval ? (
         <ApprovalPanel approval={activity.pendingApproval} activity={activity} />
@@ -512,7 +500,7 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
               key={detail.fundings.length}
               engagementId={engagement.id}
               idempotencyKey={randomUUID()}
-              assetCode={wallet.asset.code}
+              assetCode={assetLabel(wallet.asset.code)}
               walletAddress={wallet.providerRef}
               fundingWallet={detail.fundingWallet}
               suggestedAmount={
@@ -536,7 +524,7 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
               key={detail.fundings.length}
               engagementId={engagement.id}
               idempotencyKey={randomUUID()}
-              assetCode={wallet.asset.code}
+              assetCode={assetLabel(wallet.asset.code)}
               availableLabel={formatUnits(master, wallet.asset)}
               suggestedAmount={suggested}
               submitLabel={state === "AWAITING_FUNDING" ? "Authorize funding" : "Authorize top-up"}
@@ -644,7 +632,7 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
             {statement.reconciles
               ? "The figures reconcile: funded equals paid, returned and held."
               : "The figures do not reconcile. This needs looking at before anything else is done."}
-            {statement.isSimulated ? " All of it is simulated." : " Real test assets on GOAT Testnet3."}
+            {statement.isSimulated ? " These are test funds." : " Real test assets on GOAT Testnet3."}
           </p>
           {statement.unresolved > 0 ? (
             <p className="mt-2 text-sm text-warn">
@@ -697,7 +685,7 @@ async function EngagementContent({ params }: PageProps<"/engagements/[id]">) {
                     amountLabel={formatUnits(statement.heldUnits, statement.asset)}
                     destination={
                       statement.isSimulated
-                        ? "your simulated master account"
+                        ? "your master account"
                         : `your funding wallet ${detail.fundingWallet ?? ""}`
                     }
                   />

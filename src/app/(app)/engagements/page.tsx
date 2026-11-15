@@ -4,7 +4,6 @@ import Link from "next/link";
 import { EmptyState, PageHeader } from "@/components/app/page-header";
 import { PageSkeleton } from "@/components/app/page-skeleton";
 import { EngagementStateBadge } from "@/components/engagements/badges";
-import { SampleBadge } from "@/components/sellers/badges";
 import { Button } from "@/components/ui/button";
 import { SETTLEMENT_RAIL, railLabel } from "@/lib/capabilities";
 import { formatUnits } from "@/lib/units";
@@ -75,7 +74,6 @@ async function EngagementsContent() {
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="truncate font-medium text-foreground">{engagement.sellerName}</p>
                     <EngagementStateBadge state={engagement.state} />
-                    {engagement.sellerIsSample ? <SampleBadge /> : null}
                   </div>
                   <p className="truncate text-sm text-muted-foreground">
                     {engagement.projectName}

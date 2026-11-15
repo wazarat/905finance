@@ -141,7 +141,7 @@ export async function depositSimulatedFunds(
   const input = parseInput(depositInput, rawInput);
   const provider = getWalletProvider(input.rail);
   if (!provider.simulated) {
-    throw forbidden("Simulated funds cannot be added to a real account.");
+    throw forbidden("Test funds cannot be added to an on-chain account.");
   }
   const amount = parseUnits(input.amount, provider.asset.decimals);
   const cap = MAX_SIMULATED_DEPOSIT * 10n ** BigInt(provider.asset.decimals);
@@ -163,7 +163,7 @@ export async function depositSimulatedFunds(
 
     const account = await ensureMasterAccount(tx, organizationId, input.rail);
     if (!account.isSimulated) {
-      throw forbidden("Simulated funds cannot be added to a real account.");
+      throw forbidden("Test funds cannot be added to an on-chain account.");
     }
     const [updated] = await tx
       .update(masterWalletAccounts)

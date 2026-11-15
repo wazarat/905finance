@@ -16,7 +16,9 @@ export function ChainLink({
   className?: string;
 }) {
   const href = explorerLink(value);
-  const text = short && href ? shortAddress(value) : value;
+  // A reference kept in the platform's own ledger: shown by its id, without the storage prefix.
+  const internal = /^(?:demo-payment|sim-[a-z]+):[a-z]+:(.+)$/.exec(value);
+  const text = short && href ? shortAddress(value) : internal ? `ledger:${internal[1]}` : value;
   if (!href) return <span className={cn("figure break-all", className)}>{text}</span>;
   return (
     <a

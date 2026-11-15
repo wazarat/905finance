@@ -345,7 +345,7 @@ async function startRun(
     });
     if (!transport) {
       throw conflict(
-        `${seller.displayName}'s agent is not connected yet. In this version the purchasing agent can only run against the sample sellers.`,
+        `${seller.displayName}'s agent is not connected yet. The purchasing agent can only run with sellers whose agent is connected.`,
       );
     }
     if (getWalletProvider(engagement.rail, engagement.settlement).asset.code !== asset.code) {

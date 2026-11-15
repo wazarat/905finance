@@ -3,7 +3,6 @@ import {
   CapabilityChip,
   ListingStatusBadge,
   NotConnectedBadge,
-  SampleBadge,
 } from "@/components/sellers/badges";
 import { ChainLink } from "@/components/goat/chain-link";
 import { BILLING_UNIT_LABELS, NETWORK_ROLES, capabilityLabel } from "@/lib/capabilities";
@@ -46,7 +45,6 @@ export function SellerDetail({
       <div className="min-w-0 space-y-10">
         <header className="space-y-4">
           <div className="flex flex-wrap items-center gap-2">
-            {seller.isSample ? <SampleBadge /> : null}
             {showStatus ? <ListingStatusBadge status={seller.status} /> : null}
           </div>
           <h1 className="text-3xl font-semibold text-balance text-foreground sm:text-4xl">
@@ -142,8 +140,8 @@ export function SellerDetail({
                   {seller.settlesOnGoat
                     ? "Paid on GOAT Testnet3, in test assets"
                     : seller.identity?.confirmed
-                      ? "Simulated: real settlement is not switched on"
-                      : "Simulated: no confirmed GOAT identity to pay"}
+                      ? "Test funds: on-chain settlement is not switched on"
+                      : "Test funds: no confirmed GOAT identity to pay"}
                 </span>
               </span>
             </FactRow>

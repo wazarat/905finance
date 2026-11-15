@@ -38,7 +38,7 @@ describe("exact asset units", () => {
 
   it("formats with separators and the asset code", () => {
     expect(formatUnits(125000n, { code: "USD-TDN", decimals: 2 })).toBe("1,250.00 USD-TDN");
-    expect(formatUnits(0n, { code: "SIM-USD", decimals: 2 })).toBe("0.00 SIM-USD");
+    expect(formatUnits(0n, { code: "SIM-USD", decimals: 2 })).toBe("0.00 USD");
     expect(formatUnits(42n, { code: "X", decimals: 0 })).toBe("42 X");
   });
 
