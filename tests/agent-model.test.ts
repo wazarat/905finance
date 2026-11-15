@@ -213,8 +213,21 @@ describe("choosing the agent", () => {
     expect(agentModelConfig()).toBeNull();
     expect(agentModelGaps()).toEqual(["AGENT_MODEL_URL"]);
     set({ AGENT_MODEL_URL: "https://models.example/v1" });
-    expect(agentModelGaps()).toEqual(["AGENT_MODEL_NAME"]);
+    expect(agentModelGaps()).toEqual(["AGENT_MODEL_NAME", "AGENT_MODEL_KEY"]);
     expect(currentBrain()).toBeInstanceOf(ScriptedBrain);
+  });
+
+  it("stays the scripted agent while a hosted model's key is missing, rather than failing every run", () => {
+    set({ AGENT_MODEL_URL: "https://models.example/v1", AGENT_MODEL_NAME: "open-model-1" });
+    expect(agentModelConfig()).toBeNull();
+    expect(agentModelGaps()).toEqual(["AGENT_MODEL_KEY"]);
+    expect(describeAgent()).toEqual({ kind: "scripted" });
+    expect(currentBrain()).toBeInstanceOf(ScriptedBrain);
+    set({ AGENT_MODEL_URL: "https://models.example/v1", AGENT_MODEL_NAME: "open-model-1", AGENT_MODEL_KEY: "   " });
+    expect(currentBrain()).toBeInstanceOf(ScriptedBrain);
+    set({ AGENT_MODEL_URL: "https://models.example/v1", AGENT_MODEL_NAME: "open-model-1", AGENT_MODEL_KEY: "k" });
+    expect(agentModelGaps()).toEqual([]);
+    expect(currentBrain()).toBeInstanceOf(ModelBrain);
   });
 
   it("uses the configured model, and never shows its key", () => {
@@ -233,12 +246,12 @@ describe("choosing the agent", () => {
 
   it("refuses an address that would send the engagement's details in the clear, or that carries a password", () => {
     for (const url of ["http://models.example/v1", "ftp://models.example", "not an address", "https://user:pass@models.example/v1"]) {
-      set({ AGENT_MODEL_URL: url, AGENT_MODEL_NAME: "open-model-1" });
+      set({ AGENT_MODEL_URL: url, AGENT_MODEL_NAME: "open-model-1", AGENT_MODEL_KEY: "k" });
       expect(agentModelConfig(), url).toBeNull();
       expect(agentModelGaps()[0], url).toContain("AGENT_MODEL_URL as an https address");
       expect(currentBrain()).toBeInstanceOf(ScriptedBrain);
     }
-    set({ AGENT_MODEL_URL: "https://models.example/v1", AGENT_MODEL_NAME: "bad name with spaces" });
+    set({ AGENT_MODEL_URL: "https://models.example/v1", AGENT_MODEL_NAME: "bad name with spaces", AGENT_MODEL_KEY: "k" });
     expect(agentModelConfig()).toBeNull();
   });
 });

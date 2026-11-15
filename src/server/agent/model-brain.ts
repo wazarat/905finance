@@ -37,7 +37,16 @@ export function agentModelGaps(): string[] {
   if (!url) gaps.push("AGENT_MODEL_URL");
   else if (!parseBaseUrl(url)) gaps.push("AGENT_MODEL_URL as an https address (http only for a model on this machine)");
   if (!model) gaps.push("AGENT_MODEL_NAME");
+  if (needsKey(url ? parseBaseUrl(url) : null) && !process.env.AGENT_MODEL_KEY?.trim()) gaps.push("AGENT_MODEL_KEY");
   return gaps;
+}
+
+/**
+ * A hosted model is not used without its key. Until the key is there the
+ * agent stays the scripted one, rather than every run failing at the host.
+ */
+function needsKey(url: URL | null): boolean {
+  return url !== null && !LOCAL_HOSTS.has(url.hostname);
 }
 
 function parseBaseUrl(value: string): URL | null {
@@ -57,12 +66,10 @@ function parseBaseUrl(value: string): URL | null {
 export function agentModelConfig(): AgentModelConfig | null {
   const url = parseBaseUrl(process.env.AGENT_MODEL_URL?.trim() ?? "");
   const model = process.env.AGENT_MODEL_NAME?.trim() ?? "";
+  const apiKey = process.env.AGENT_MODEL_KEY?.trim() || null;
   if (!url || !/^[A-Za-z0-9._:/@-]{1,120}$/.test(model)) return null;
-  return {
-    baseUrl: url.toString().replace(/\/+$/, ""),
-    model,
-    apiKey: process.env.AGENT_MODEL_KEY?.trim() || null,
-  };
+  if (needsKey(url) && !apiKey) return null;
+  return { baseUrl: url.toString().replace(/\/+$/, ""), model, apiKey };
 }
 
 export type AgentDescription =
